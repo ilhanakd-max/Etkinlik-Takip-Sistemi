@@ -443,6 +443,13 @@ function generateXLS($data, $title, $date_range, $filters) {
                 $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
             }
 
+            $payment = trim((string)($event['payment'] ?? ''));
+            if ($payment === '0' || $payment === '-0') {
+                $payment = '';
+            }
+
+            $payment_display = $payment !== '' ? $payment : $payment_text;
+
             $output .= '<tr>';
             $output .= '<td>' . htmlspecialchars(turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')), ENT_QUOTES, 'UTF-8') . '</td>';
             $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
@@ -450,7 +457,7 @@ function generateXLS($data, $title, $date_range, $filters) {
             $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
             $output .= '<td>' . htmlspecialchars($event['contact_info'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
             $output .= '<td>' . htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($payment_text, ENT_QUOTES, 'UTF-8') . '</td>';
+            $output .= '<td>' . htmlspecialchars($payment_display, ENT_QUOTES, 'UTF-8') . '</td>';
             $output .= '</tr>';
         }
     } else {
