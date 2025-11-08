@@ -32,7 +32,18 @@ try {
     die("Veritabanı bağlantısında bir sorun oluştu. Lütfen daha sonra tekrar deneyin.");
 }
 
-// Oturum başlat
+// Oturum başlat - güvenli oturum ayarları
+ini_set('session.use_strict_mode', '1');
+$session_secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => $session_secure,
+    'httponly' => true,
+    'samesite' => 'Strict',
+]);
 session_start();
 
 // YENİ: Dinamik durum ve ödeme bilgilerini veritabanından çek
@@ -141,7 +152,18 @@ function clean_input($data) {
     // inputları temizlerken, veritabanına kaydedilecek Türkçe karakterlerin bozulmaması için
     // sadece trim ve strip_tags kullanılıp htmlspecialchars kaldırıldı.
     // HTML çıktısı alınırken (echo) htmlspecialchars kullanılmalıdır.
-    return trim(strip_tags($data));
+    $sanitized = trim(strip_tags((string) $data));
+    // Kontrol karakterlerini kaldır
+    return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
+}
+
+function is_valid_date_string($date) {
+    if (!is_string($date) || $date === '') {
+        return false;
+    }
+
+    $dt = DateTime::createFromFormat('Y-m-d', $date);
+    return $dt && $dt->format('Y-m-d') === $date;
 }
 
 // Admin giriş kontrolü
@@ -202,11 +224,19 @@ function get_events_by_unit_and_date($unit_id, $date, $pdo) {
 
 // AJAX isteklerini işleme
 if (isset($_GET['ajax'])) {
-    $ajax_action = $_GET['ajax'];
+    $ajax_action = clean_input($_GET['ajax']);
     if ($ajax_action === 'get_events' && is_admin()) {
         header('Content-Type: application/json');
-        $unit_id = (int)$_GET['unit_id'];
-        $event_date = $_GET['event_date'];
+        $unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $event_date_raw = $_GET['event_date'] ?? '';
+        $event_date = clean_input($event_date_raw);
+
+        if ($unit_id === false || !is_valid_date_string($event_date)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Geçersiz parametreler']);
+            exit;
+        }
+
         $sql = "SELECT id, event_name, event_time, contact_info, status FROM events WHERE unit_id = ? AND event_date = ?";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$unit_id, $event_date]);
@@ -214,6 +244,9 @@ if (isset($_GET['ajax'])) {
         echo json_encode($events);
         exit;
     }
+
+    http_response_code(403);
+    exit;
 }
 
 // Yardımcı: Varsa mevcut çıktı tamponlarını temizle
@@ -563,25 +596,60 @@ function generateXLS($data, $title, $date_range, $filters) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Admin giriş işlemi
     if (isset($_POST['admin_login'])) {
-        $username = clean_input($_POST['username']);
-        $password = clean_input($_POST['password']);
-        $user = check_admin_login($username, $password, $pdo);
-        if ($user) {
-            $_SESSION['admin'] = true;
-            $_SESSION['admin_user'] = $user;
-            // Giriş sonrası mevcut sayfaya yönlendirme, admin paneline değil.
-            // Bu sayede hızlı düzenleme sonrası da doğru yerde kalınır.
-            header("Location: ".$_SERVER['PHP_SELF'] . "?" . http_build_query($_GET));
-            exit;
+        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
+            $login_error = "Geçersiz istek! (CSRF)";
         } else {
-            $login_error = "Geçersiz kullanıcı adı veya şifre!";
+            $username = clean_input($_POST['username'] ?? '');
+            $password = $_POST['password'] ?? '';
+
+            if ($username === '' || $password === '') {
+                $login_error = "Kullanıcı adı ve şifre zorunludur!";
+            } else {
+                $user = check_admin_login($username, $password, $pdo);
+                if ($user) {
+                    session_regenerate_id(true);
+                    $_SESSION['admin'] = true;
+                    $_SESSION['admin_user'] = [
+                        'id' => $user['id'],
+                        'username' => $user['username'],
+                        'full_name' => $user['full_name'],
+                    ];
+
+                    $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
+                    $redirect_params = [];
+                    foreach ($_GET as $key => $value) {
+                        if (is_array($value)) {
+                            continue;
+                        }
+                        $redirect_params[$key] = clean_input($value);
+                    }
+                    if (!empty($redirect_params)) {
+                        $redirect_path .= '?' . http_build_query($redirect_params);
+                    }
+
+                    header('Location: ' . $redirect_path);
+                    exit;
+                } else {
+                    $login_error = "Geçersiz kullanıcı adı veya şifre!";
+                }
+            }
         }
     }
 
     // Admin çıkış işlemi
     if (isset($_POST['admin_logout'])) {
-        session_destroy();
-        header("Location: ".$_SERVER['PHP_SELF']);
+        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
+            $_SESSION['error'] = "Geçersiz istek! (CSRF)";
+        } else {
+            $_SESSION = [];
+            if (ini_get('session.use_cookies')) {
+                $params = session_get_cookie_params();
+                setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+            }
+            session_destroy();
+        }
+        $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
+        header('Location: ' . $redirect_path);
         exit;
     }
 
@@ -896,16 +964,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['error'] = "Geçersiz istek! (CSRF)";
             } else {
                 $id = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
-                $username = clean_input($_POST['username']);
-                $password = clean_input($_POST['password']);
-                $full_name = clean_input($_POST['full_name']);
-                $email = clean_input($_POST['email']);
+                $username = clean_input($_POST['username'] ?? '');
+                $password = $_POST['password'] ?? '';
+                $full_name = clean_input($_POST['full_name'] ?? '');
+                $email = clean_input($_POST['email'] ?? '');
                 $active = isset($_POST['user_active']) ? 1 : 0;
+                if ($username === '') {
+                    throw new Exception("Kullanıcı adı zorunludur!");
+                }
+                if (!preg_match('/^[A-Za-z0-9._-]{3,}$/u', $username)) {
+                    throw new Exception("Kullanıcı adı en az 3 karakter olmalı ve yalnızca harf, rakam, nokta, alt çizgi veya tire içerebilir.");
+                }
+                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    throw new Exception("Geçersiz e-posta adresi!");
+                }
                 try {
                     if ($id > 0) {
+                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ? AND id <> ?");
+                        $stmt->execute([$username, $id]);
+                        if ($stmt->fetchColumn() > 0) {
+                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
+                        }
                         $sql = "UPDATE admin_users SET username = ?, full_name = ?, email = ?, is_active = ?";
                         $params = [$username, $full_name, $email, $active];
-                        if (!empty($password)) {
+                        if ($password !== '') {
                             $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                             $sql .= ", password = ?";
                             $params[] = $hashed_password;
@@ -916,8 +998,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmt->execute($params);
                         $_SESSION['message'] = "Kullanıcı başarıyla güncellendi!";
                     } else {
-                        if (empty($password)) {
+                        if ($password === '') {
                             throw new Exception("Yeni kullanıcı için şifre zorunludur!");
+                        }
+                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ?");
+                        $stmt->execute([$username]);
+                        if ($stmt->fetchColumn() > 0) {
+                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
                         }
                         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                         $sql = "INSERT INTO admin_users (username, password, full_name, email, is_active) VALUES (?, ?, ?, ?, ?)";
@@ -1052,11 +1139,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Sayfa parametresi
-$page = isset($_GET['page']) ? $_GET['page'] : 'index';
-$unit_id = isset($_GET['unit_id']) ? (int)$_GET['unit_id'] : 1;
+$page = isset($_GET['page']) ? clean_input($_GET['page']) : 'index';
+$allowed_pages = ['index', 'admin'];
+if (!in_array($page, $allowed_pages, true)) {
+    $page = 'index';
+}
+
+$unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+if ($unit_id === false || $unit_id === null) {
+    $unit_id = 1;
+}
+
 // Yeni: Yeni ay ve yıl parametrelerini al
-$selected_month = isset($_GET['month']) ? (int)$_GET['month'] : date('n');
-$selected_year = isset($_GET['year']) ? (int)$_GET['year'] : date('Y');
+$selected_month = filter_input(INPUT_GET, 'month', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 12]]);
+if ($selected_month === false || $selected_month === null) {
+    $selected_month = (int) date('n');
+}
+
+$current_year = (int) date('Y');
+$selected_year = filter_input(INPUT_GET, 'year', FILTER_VALIDATE_INT, ['options' => ['min_range' => $current_year - 5, 'max_range' => $current_year + 5]]);
+if ($selected_year === false || $selected_year === null) {
+    $selected_year = $current_year;
+}
 
 // Mesaj ve hata kontrolü
 if (isset($_SESSION['message'])) {
@@ -1882,6 +1986,7 @@ if (isset($_SESSION['error'])) {
                         </li>
                         <li class="nav-item">
                             <form method="post" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                 <button type="submit" name="admin_logout" class="btn btn-outline-light btn-sm">Çıkış</button>
                             </form>
                         </li>
@@ -2305,12 +2410,25 @@ if (isset($_SESSION['error'])) {
             header("Location: ?page=index");
             exit;
         }
-        $tab = isset($_GET['tab']) ? $_GET['tab'] : 'events';
+        $tab = isset($_GET['tab']) ? clean_input($_GET['tab']) : 'events';
+        $allowed_tabs = ['events', 'units', 'holidays', 'announcements', 'reports', 'users', 'settings'];
+        if (!in_array($tab, $allowed_tabs, true)) {
+            $tab = 'events';
+        }
         // YENİ: Admin paneli etkinlik arama ve filtreleme terimleri
         $search_admin_term = isset($_GET['search_admin']) ? clean_input($_GET['search_admin']) : '';
-        $filter_unit_id = isset($_GET['filter_unit_id']) ? (int)$_GET['filter_unit_id'] : 0;
+        $filter_unit_id = filter_input(INPUT_GET, 'filter_unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($filter_unit_id === false || $filter_unit_id === null) {
+            $filter_unit_id = 0;
+        }
         $filter_start_date = isset($_GET['filter_start_date']) ? clean_input($_GET['filter_start_date']) : '';
+        if (!empty($filter_start_date) && !is_valid_date_string($filter_start_date)) {
+            $filter_start_date = '';
+        }
         $filter_end_date = isset($_GET['filter_end_date']) ? clean_input($_GET['filter_end_date']) : '';
+        if (!empty($filter_end_date) && !is_valid_date_string($filter_end_date)) {
+            $filter_end_date = '';
+        }
         $filter_status = isset($_GET['filter_status']) ? clean_input($_GET['filter_status']) : '';
         $filter_payment_status = isset($_GET['filter_payment_status']) ? clean_input($_GET['filter_payment_status']) : '';
 
@@ -3284,6 +3402,7 @@ if (isset($_SESSION['error'])) {
                         <?php if (isset($login_error)): ?>
                             <div class="alert alert-danger"><?php echo $login_error; ?></div>
                         <?php endif; ?>
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                         <div class="mb-3">
                             <label for="login_username" class="form-label">Kullanıcı Adı</label>
                             <input type="text" class="form-control" id="login_username" name="username" required>
