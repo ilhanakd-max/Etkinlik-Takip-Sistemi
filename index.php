@@ -2313,6 +2313,12 @@ if (isset($_SESSION['error'])) {
         $filter_end_date = isset($_GET['filter_end_date']) ? clean_input($_GET['filter_end_date']) : '';
         $filter_status = isset($_GET['filter_status']) ? clean_input($_GET['filter_status']) : '';
         $filter_payment_status = isset($_GET['filter_payment_status']) ? clean_input($_GET['filter_payment_status']) : '';
+
+        // VARSAYILAN: Yönetici tablosunda yalnızca mevcut ayın etkinliklerini göster
+        if (empty($filter_start_date) && empty($filter_end_date)) {
+            $filter_start_date = date('Y-m-01');
+            $filter_end_date = date('Y-m-t');
+        }
         
         $csrf_token = generateCSRFToken();
     ?>
