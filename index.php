@@ -193,10 +193,70 @@ function check_admin_login($username, $password, $pdo) {
 
 // Tatil kontrolü
 function is_holiday($date, $pdo) {
+    static $holiday_cache = [];
+
+    if (isset($holiday_cache[$date])) {
+        return $holiday_cache[$date];
+    }
+
     $sql = "SELECT * FROM holidays WHERE holiday_date = ?";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$date]);
-    return $stmt->fetch(PDO::FETCH_ASSOC);
+    $holiday = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($holiday) {
+        $holiday_cache[$date] = $holiday;
+        return $holiday;
+    }
+
+    $recurring_name = get_recurring_holiday_for_date($date);
+    if ($recurring_name !== null) {
+        $holiday_cache[$date] = [
+            'holiday_date' => $date,
+            'holiday_name' => $recurring_name,
+            'id' => null,
+            'is_recurring' => true,
+        ];
+        return $holiday_cache[$date];
+    }
+
+    $holiday_cache[$date] = false;
+    return false;
+}
+
+function get_recurring_holiday_definitions() {
+    return [
+        '01-01' => 'Yılbaşı',
+        '04-23' => 'Ulusal Egemenlik ve Çocuk Bayramı',
+        '05-01' => 'Emek ve Dayanışma Günü',
+        '05-19' => 'Atatürk\'ü Anma, Gençlik ve Spor Bayramı',
+        '07-15' => 'Demokrasi ve Milli Birlik Günü',
+        '08-30' => 'Zafer Bayramı',
+        '10-29' => 'Cumhuriyet Bayramı',
+    ];
+}
+
+function get_recurring_holidays_for_year($year) {
+    $definitions = get_recurring_holiday_definitions();
+    $holidays = [];
+
+    foreach ($definitions as $month_day => $name) {
+        $holidays[sprintf('%04d-%s', (int) $year, $month_day)] = $name;
+    }
+
+    return $holidays;
+}
+
+function get_recurring_holiday_for_date($date) {
+    $timestamp = strtotime($date);
+    if ($timestamp === false) {
+        return null;
+    }
+
+    $month_day = date('m-d', $timestamp);
+    $definitions = get_recurring_holiday_definitions();
+
+    return $definitions[$month_day] ?? null;
 }
 
 // Hafta sonu kontrolü
@@ -2743,6 +2803,20 @@ if (isset($_SESSION['error'])) {
                         <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#holidayModal" onclick="newHoliday()">
                             <i class="fas fa-plus me-1"></i>Yeni Tatil Ekle
                         </button>
+                        <?php $recurring_holidays = get_recurring_holidays_for_year((int) date('Y')); ?>
+                        <?php if (!empty($recurring_holidays)): ?>
+                            <div class="alert alert-info small" role="alert">
+                                <strong>Bilgi:</strong> Yinelenen resmi tatiller takvimde otomatik olarak gösterilir.
+                                <ul class="mb-0 mt-2">
+                                    <?php foreach ($recurring_holidays as $recurring_date => $recurring_name): ?>
+                                        <li>
+                                            <?php echo turkish_date('d F', strtotime($recurring_date)); ?> –
+                                            <?php echo htmlspecialchars($recurring_name, ENT_QUOTES, 'UTF-8'); ?>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
                         <div class="table-responsive">
                             <table class="table table-hover">
                                 <thead>
