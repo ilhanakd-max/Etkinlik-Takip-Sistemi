@@ -32,18 +32,7 @@ try {
     die("Veritabanı bağlantısında bir sorun oluştu. Lütfen daha sonra tekrar deneyin.");
 }
 
-// Oturum başlat - güvenli oturum ayarları
-ini_set('session.use_strict_mode', '1');
-$session_secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'domain' => '',
-    'secure' => $session_secure,
-    'httponly' => true,
-    'samesite' => 'Strict',
-]);
+// Oturum başlat
 session_start();
 
 // YENİ: Dinamik durum ve ödeme bilgilerini veritabanından çek
@@ -152,18 +141,7 @@ function clean_input($data) {
     // inputları temizlerken, veritabanına kaydedilecek Türkçe karakterlerin bozulmaması için
     // sadece trim ve strip_tags kullanılıp htmlspecialchars kaldırıldı.
     // HTML çıktısı alınırken (echo) htmlspecialchars kullanılmalıdır.
-    $sanitized = trim(strip_tags((string) $data));
-    // Kontrol karakterlerini kaldır
-    return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
-}
-
-function is_valid_date_string($date) {
-    if (!is_string($date) || $date === '') {
-        return false;
-    }
-
-    $dt = DateTime::createFromFormat('Y-m-d', $date);
-    return $dt && $dt->format('Y-m-d') === $date;
+    return trim(strip_tags($data));
 }
 
 // Admin giriş kontrolü
@@ -224,19 +202,11 @@ function get_events_by_unit_and_date($unit_id, $date, $pdo) {
 
 // AJAX isteklerini işleme
 if (isset($_GET['ajax'])) {
-    $ajax_action = clean_input($_GET['ajax']);
+    $ajax_action = $_GET['ajax'];
     if ($ajax_action === 'get_events' && is_admin()) {
         header('Content-Type: application/json');
-        $unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        $event_date_raw = $_GET['event_date'] ?? '';
-        $event_date = clean_input($event_date_raw);
-
-        if ($unit_id === false || !is_valid_date_string($event_date)) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Geçersiz parametreler']);
-            exit;
-        }
-
+        $unit_id = (int)$_GET['unit_id'];
+        $event_date = $_GET['event_date'];
         $sql = "SELECT id, event_name, event_time, contact_info, status FROM events WHERE unit_id = ? AND event_date = ?";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$unit_id, $event_date]);
@@ -244,100 +214,12 @@ if (isset($_GET['ajax'])) {
         echo json_encode($events);
         exit;
     }
-
-    http_response_code(403);
-    exit;
-}
-
-// Yardımcı: Varsa mevcut çıktı tamponlarını temizle
-function clear_output_buffers() {
-    while (ob_get_level() > 0) {
-        ob_end_clean();
-    }
-}
-
-function normalize_payment_amount($value) {
-    if ($value === null) {
-        return null;
-    }
-
-    if (is_numeric($value)) {
-        return (float) $value;
-    }
-
-    $normalized = trim((string) $value);
-    if ($normalized === '' || $normalized === '0' || $normalized === '-0') {
-        return $normalized === '' ? null : 0.0;
-    }
-
-    $normalized = str_replace("\xc2\xa0", ' ', $normalized); // NBSP temizle
-    $normalized = str_replace(' ', '', $normalized);
-    $normalized = preg_replace('/[^\d,\.\-]/u', '', $normalized);
-    if ($normalized === '') {
-        return null;
-    }
-
-    if (strpos($normalized, ',') !== false && strpos($normalized, '.') !== false) {
-        $normalized = str_replace('.', '', $normalized);
-        $normalized = str_replace(',', '.', $normalized);
-    } else {
-        $normalized = str_replace(',', '.', $normalized);
-    }
-
-    if ($normalized === '' || $normalized === '.' || $normalized === '-.') {
-        return null;
-    }
-
-    return is_numeric($normalized) ? (float) $normalized : null;
-}
-
-function build_status_summary_counts($data) {
-    global $all_event_statuses;
-
-    $canonical_statuses = ['confirmed', 'option', 'free', 'cancelled'];
-    $counts = array_fill_keys($canonical_statuses, 0);
-
-    foreach ($data as $event) {
-        $status_key = $event['status'] ?? '';
-        if (isset($counts[$status_key])) {
-            $counts[$status_key]++;
-        }
-    }
-
-    $labels = [
-        'confirmed' => $all_event_statuses['confirmed']['display_name'] ?? 'Onaylı',
-        'option' => $all_event_statuses['option']['display_name'] ?? 'Opsiyonlu',
-        'free' => $all_event_statuses['free']['display_name'] ?? 'Ücretsiz',
-        'cancelled' => $all_event_statuses['cancelled']['display_name'] ?? 'İptal',
-    ];
-
-    return [$counts, $labels];
-}
-
-function build_status_summary_text($data) {
-    [$counts, $labels] = build_status_summary_counts($data);
-
-    return 'Toplam: '
-        . $labels['confirmed'] . ' ' . $counts['confirmed'] . ' | '
-        . $labels['option'] . ' ' . $counts['option'] . ' | '
-        . $labels['free'] . ' ' . $counts['free'] . ' | '
-        . $labels['cancelled'] . ' ' . $counts['cancelled'];
-}
-
-function build_status_summary_html($data) {
-    [$counts, $labels] = build_status_summary_counts($data);
-
-    return 'Toplam: '
-        . htmlspecialchars($labels['confirmed'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['confirmed'] . ' | '
-        . htmlspecialchars($labels['option'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['option'] . ' | '
-        . htmlspecialchars($labels['free'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['free'] . ' | '
-        . htmlspecialchars($labels['cancelled'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['cancelled'];
 }
 
 // TXT dosyası oluşturma fonksiyonu (GÜNCELLENDİ)
 function generateTXT($data, $title, $date_range, $filters) {
     global $all_event_statuses, $all_payment_statuses; // YENİ: Global durumları kullan
-    clear_output_buffers(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
+    ob_clean(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
     header('Content-Type: text/plain; charset=utf-8');
     header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.txt"');
 
@@ -375,8 +257,7 @@ function generateTXT($data, $title, $date_range, $filters) {
         }
     }
 
-    $summary_text = build_status_summary_text($data);
-    $output .= $summary_text . "\r\n";
+    $output .= "Toplam Etkinlik Sayısı: " . count($data) . "\r\n";
     $output .= "Rapor Oluşturulma Tarihi: " . date('d.m.Y H:i:s') . "\r\n";
 
     echo $output;
@@ -386,7 +267,7 @@ function generateTXT($data, $title, $date_range, $filters) {
 // DOC dosyası oluşturma fonksiyonu (GÜNCELLENDİ)
 function generateDOC($data, $title, $date_range, $filters) {
     global $all_event_statuses, $all_payment_statuses; // YENİ: Global durumları kullan
-    clear_output_buffers(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
+    ob_clean(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
     header('Content-Type: application/msword; charset=utf-8');
     header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.doc"');
 
@@ -504,89 +385,10 @@ function generateDOC($data, $title, $date_range, $filters) {
         $output .= '<td>' . $payment_text . '</td>';
         $output .= '</tr>';
     }
-    $summary_text = build_status_summary_html($data);
-    $output .= '</tbody>';
-    $output .= '<tfoot><tr><td colspan="7"><strong>' . $summary_text . '</strong></td></tr></tfoot>';
-    $output .= '</table>';
+    $output .= '</tbody></table>';
     $output .= '<p><strong>Toplam Etkinlik:</strong> ' . count($data) . '</p>';
     $output .= '<p><strong>Rapor Oluşturulma Tarihi:</strong> ' . turkish_date('d M Y H:i:s') . '</p>';
     $output .= '</body></html>';
-    echo $output;
-    exit;
-}
-
-
-function generateXLS($data, $title, $date_range, $filters) {
-    global $all_event_statuses, $all_payment_statuses;
-    clear_output_buffers();
-    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
-    header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.xls"');
-    header('Cache-Control: max-age=0');
-
-    $output = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
-    $output .= '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">';
-    $output .= '<style>body{font-family:Calibri,Arial,sans-serif;font-size:12px;}';
-    $output .= 'h1{font-size:18px;text-align:center;margin-bottom:20px;}';
-    $output .= 'table{border-collapse:collapse;width:100%;}';
-    $output .= 'th,td{border:1px solid #000;padding:8px;text-align:left;white-space:nowrap;}';
-    $output .= 'th{background-color:#f2f2f2;font-weight:bold;}';
-    $output .= 'tr:nth-child(even){background-color:#f9f9f9;}';
-    $output .= '</style></head><body>';
-
-    $output .= '<h1>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>';
-    $output .= '<p><strong>Tarih Aralığı:</strong> ' . htmlspecialchars($date_range, ENT_QUOTES, 'UTF-8') . '</p>';
-    if (!empty($filters)) {
-        $output .= '<p><strong>Filtreler:</strong> ' . htmlspecialchars($filters, ENT_QUOTES, 'UTF-8') . '</p>';
-    }
-
-    $output .= '<table>';
-    $output .= '<thead><tr>';
-    $headers = ['Tarih', 'Birim', 'Etkinlik Adı', 'Saat', 'İletişim', 'Durum', 'Ödeme'];
-    foreach ($headers as $header) {
-        $output .= '<th>' . htmlspecialchars($header, ENT_QUOTES, 'UTF-8') . '</th>';
-    }
-    $output .= '</tr></thead><tbody>';
-
-    if (!empty($data)) {
-        foreach ($data as $event) {
-            $event_status = $event['status'] ?? '';
-            $status_text = $all_event_statuses[$event_status]['display_name'] ?? $event_status;
-
-            $payment_text = '-';
-            $event_payment_status = $event['payment_status'] ?? '';
-            if ($event_status !== 'free' && $event_status !== 'cancelled' && !empty($event_payment_status)) {
-                $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
-            }
-
-            $payment = trim((string)($event['payment'] ?? ''));
-            if ($payment === '0' || $payment === '-0') {
-                $payment = '';
-            }
-
-            $payment_display = $payment !== '' ? $payment : $payment_text;
-
-            $output .= '<tr>';
-            $output .= '<td>' . htmlspecialchars(turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')), ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['event_name'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['contact_info'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($payment_display, ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '</tr>';
-        }
-    } else {
-        $output .= '<tr><td colspan="7" style="text-align:center;">Veri bulunamadı</td></tr>';
-    }
-
-    $summary_text = build_status_summary_html($data);
-    $output .= '</tbody>';
-    $output .= '<tfoot><tr><td colspan="7"><strong>' . $summary_text . '</strong></td></tr></tfoot>';
-    $output .= '</table>';
-    $output .= '<p><strong>Toplam Etkinlik:</strong> ' . count($data) . '</p>';
-    $output .= '<p><strong>Rapor Oluşturulma Tarihi:</strong> ' . htmlspecialchars(turkish_date('d M Y H:i:s'), ENT_QUOTES, 'UTF-8') . '</p>';
-    $output .= '</body></html>';
-
     echo $output;
     exit;
 }
@@ -596,60 +398,25 @@ function generateXLS($data, $title, $date_range, $filters) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Admin giriş işlemi
     if (isset($_POST['admin_login'])) {
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $login_error = "Geçersiz istek! (CSRF)";
+        $username = clean_input($_POST['username']);
+        $password = clean_input($_POST['password']);
+        $user = check_admin_login($username, $password, $pdo);
+        if ($user) {
+            $_SESSION['admin'] = true;
+            $_SESSION['admin_user'] = $user;
+            // Giriş sonrası mevcut sayfaya yönlendirme, admin paneline değil.
+            // Bu sayede hızlı düzenleme sonrası da doğru yerde kalınır.
+            header("Location: ".$_SERVER['PHP_SELF'] . "?" . http_build_query($_GET));
+            exit;
         } else {
-            $username = clean_input($_POST['username'] ?? '');
-            $password = $_POST['password'] ?? '';
-
-            if ($username === '' || $password === '') {
-                $login_error = "Kullanıcı adı ve şifre zorunludur!";
-            } else {
-                $user = check_admin_login($username, $password, $pdo);
-                if ($user) {
-                    session_regenerate_id(true);
-                    $_SESSION['admin'] = true;
-                    $_SESSION['admin_user'] = [
-                        'id' => $user['id'],
-                        'username' => $user['username'],
-                        'full_name' => $user['full_name'],
-                    ];
-
-                    $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
-                    $redirect_params = [];
-                    foreach ($_GET as $key => $value) {
-                        if (is_array($value)) {
-                            continue;
-                        }
-                        $redirect_params[$key] = clean_input($value);
-                    }
-                    if (!empty($redirect_params)) {
-                        $redirect_path .= '?' . http_build_query($redirect_params);
-                    }
-
-                    header('Location: ' . $redirect_path);
-                    exit;
-                } else {
-                    $login_error = "Geçersiz kullanıcı adı veya şifre!";
-                }
-            }
+            $login_error = "Geçersiz kullanıcı adı veya şifre!";
         }
     }
 
     // Admin çıkış işlemi
     if (isset($_POST['admin_logout'])) {
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-        } else {
-            $_SESSION = [];
-            if (ini_get('session.use_cookies')) {
-                $params = session_get_cookie_params();
-                setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-            }
-            session_destroy();
-        }
-        $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
-        header('Location: ' . $redirect_path);
+        session_destroy();
+        header("Location: ".$_SERVER['PHP_SELF']);
         exit;
     }
 
@@ -746,8 +513,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute($params);
             $report_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // TXT/DOC/XLS oluşturma
-            if (!empty($export_type) && in_array($export_type, ['txt', 'doc', 'xls'], true)) {
+            // TXT/DOC oluşturma
+            if (!empty($export_type) && ($export_type === 'txt' || $export_type === 'doc')) {
                 $title = "Çeşme Belediyesi Kültür Müdürlüğü Etkinlik Raporu";
                 $date_range = turkish_date('d M Y', strtotime($start_date)) . ' - ' . turkish_date('d M Y', strtotime($end_date));
                 $filters = [];
@@ -778,9 +545,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($export_type === 'doc') {
                     generateDOC($report_data, $title, $date_range, $filters_text);
-                }
-                if ($export_type === 'xls') {
-                    generateXLS($report_data, $title, $date_range, $filters_text);
                 }
             }
             $_SESSION['report_data'] = $report_data;
@@ -964,30 +728,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['error'] = "Geçersiz istek! (CSRF)";
             } else {
                 $id = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
-                $username = clean_input($_POST['username'] ?? '');
-                $password = $_POST['password'] ?? '';
-                $full_name = clean_input($_POST['full_name'] ?? '');
-                $email = clean_input($_POST['email'] ?? '');
+                $username = clean_input($_POST['username']);
+                $password = clean_input($_POST['password']);
+                $full_name = clean_input($_POST['full_name']);
+                $email = clean_input($_POST['email']);
                 $active = isset($_POST['user_active']) ? 1 : 0;
-                if ($username === '') {
-                    throw new Exception("Kullanıcı adı zorunludur!");
-                }
-                if (!preg_match('/^[A-Za-z0-9._-]{3,}$/u', $username)) {
-                    throw new Exception("Kullanıcı adı en az 3 karakter olmalı ve yalnızca harf, rakam, nokta, alt çizgi veya tire içerebilir.");
-                }
-                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    throw new Exception("Geçersiz e-posta adresi!");
-                }
                 try {
                     if ($id > 0) {
-                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ? AND id <> ?");
-                        $stmt->execute([$username, $id]);
-                        if ($stmt->fetchColumn() > 0) {
-                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
-                        }
                         $sql = "UPDATE admin_users SET username = ?, full_name = ?, email = ?, is_active = ?";
                         $params = [$username, $full_name, $email, $active];
-                        if ($password !== '') {
+                        if (!empty($password)) {
                             $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                             $sql .= ", password = ?";
                             $params[] = $hashed_password;
@@ -998,13 +748,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmt->execute($params);
                         $_SESSION['message'] = "Kullanıcı başarıyla güncellendi!";
                     } else {
-                        if ($password === '') {
+                        if (empty($password)) {
                             throw new Exception("Yeni kullanıcı için şifre zorunludur!");
-                        }
-                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ?");
-                        $stmt->execute([$username]);
-                        if ($stmt->fetchColumn() > 0) {
-                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
                         }
                         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                         $sql = "INSERT INTO admin_users (username, password, full_name, email, is_active) VALUES (?, ?, ?, ?, ?)";
@@ -1139,28 +884,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Sayfa parametresi
-$page = isset($_GET['page']) ? clean_input($_GET['page']) : 'index';
-$allowed_pages = ['index', 'admin'];
-if (!in_array($page, $allowed_pages, true)) {
-    $page = 'index';
-}
-
-$unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-if ($unit_id === false || $unit_id === null) {
-    $unit_id = 1;
-}
-
+$page = isset($_GET['page']) ? $_GET['page'] : 'index';
+$unit_id = isset($_GET['unit_id']) ? (int)$_GET['unit_id'] : 1;
 // Yeni: Yeni ay ve yıl parametrelerini al
-$selected_month = filter_input(INPUT_GET, 'month', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 12]]);
-if ($selected_month === false || $selected_month === null) {
-    $selected_month = (int) date('n');
-}
-
-$current_year = (int) date('Y');
-$selected_year = filter_input(INPUT_GET, 'year', FILTER_VALIDATE_INT, ['options' => ['min_range' => $current_year - 5, 'max_range' => $current_year + 5]]);
-if ($selected_year === false || $selected_year === null) {
-    $selected_year = $current_year;
-}
+$selected_month = isset($_GET['month']) ? (int)$_GET['month'] : date('n');
+$selected_year = isset($_GET['year']) ? (int)$_GET['year'] : date('Y');
 
 // Mesaj ve hata kontrolü
 if (isset($_SESSION['message'])) {
@@ -1178,12 +906,6 @@ if (isset($_SESSION['error'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="manifest" href="/test/manifest.json">
-    <meta name="theme-color" content="#1565c0">
-    <link rel="apple-touch-icon" href="/test/icons/icon-192.png">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <meta name="apple-mobile-web-app-title" content="EtkinlikTakip">
     <title>Çeşme Belediyesi Kültür Müdürlüğü - Etkinlik Takvimi</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1229,26 +951,12 @@ if (isset($_SESSION['error'])) {
             font-weight: 700;
             font-size: 1.3rem;
             display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            line-height: 1.2;
-        }
-
-        .navbar-brand .brand-title {
-            display: flex;
             align-items: center;
-            gap: 0.5rem;
         }
-
+        
         .navbar-brand i {
+            margin-right: 10px;
             font-size: 1.5rem;
-        }
-
-        .navbar-brand .brand-subtitle {
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: rgba(255, 255, 255, 0.85);
-            margin-top: 0.15rem;
         }
         
         .navbar-nav .nav-link {
@@ -1985,11 +1693,7 @@ if (isset($_SESSION['error'])) {
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
             <a class="navbar-brand" href="?page=index">
-                <span class="brand-title">
-                    <i class="fas fa-landmark"></i>
-                    <span class="brand-name">Çeşme Belediyesi Kültür Müdürlüğü</span>
-                </span>
-                <span class="brand-subtitle">Etkinlik Takip Uygulaması</span>
+                <i class="fas fa-landmark"></i>Çeşme Belediyesi Kültür Müdürlüğü
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -2010,7 +1714,6 @@ if (isset($_SESSION['error'])) {
                         </li>
                         <li class="nav-item">
                             <form method="post" class="d-inline">
-                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                 <button type="submit" name="admin_logout" class="btn btn-outline-light btn-sm">Çıkış</button>
                             </form>
                         </li>
@@ -2434,33 +2137,14 @@ if (isset($_SESSION['error'])) {
             header("Location: ?page=index");
             exit;
         }
-        $tab = isset($_GET['tab']) ? clean_input($_GET['tab']) : 'events';
-        $allowed_tabs = ['events', 'units', 'holidays', 'announcements', 'reports', 'users', 'settings'];
-        if (!in_array($tab, $allowed_tabs, true)) {
-            $tab = 'events';
-        }
+        $tab = isset($_GET['tab']) ? $_GET['tab'] : 'events';
         // YENİ: Admin paneli etkinlik arama ve filtreleme terimleri
         $search_admin_term = isset($_GET['search_admin']) ? clean_input($_GET['search_admin']) : '';
-        $filter_unit_id = filter_input(INPUT_GET, 'filter_unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        if ($filter_unit_id === false || $filter_unit_id === null) {
-            $filter_unit_id = 0;
-        }
+        $filter_unit_id = isset($_GET['filter_unit_id']) ? (int)$_GET['filter_unit_id'] : 0;
         $filter_start_date = isset($_GET['filter_start_date']) ? clean_input($_GET['filter_start_date']) : '';
-        if (!empty($filter_start_date) && !is_valid_date_string($filter_start_date)) {
-            $filter_start_date = '';
-        }
         $filter_end_date = isset($_GET['filter_end_date']) ? clean_input($_GET['filter_end_date']) : '';
-        if (!empty($filter_end_date) && !is_valid_date_string($filter_end_date)) {
-            $filter_end_date = '';
-        }
         $filter_status = isset($_GET['filter_status']) ? clean_input($_GET['filter_status']) : '';
         $filter_payment_status = isset($_GET['filter_payment_status']) ? clean_input($_GET['filter_payment_status']) : '';
-
-        // VARSAYILAN: Yönetici tablosunda yalnızca mevcut ayın etkinliklerini göster
-        if (empty($filter_start_date) && empty($filter_end_date)) {
-            $filter_start_date = date('Y-m-01');
-            $filter_end_date = date('Y-m-t');
-        }
         
         $csrf_token = generateCSRFToken();
     ?>
@@ -3017,19 +2701,6 @@ if (isset($_SESSION['error'])) {
                                                 <i class="fas fa-file-word me-1"></i>DOC Olarak İndir
                                             </button>
                                         </form>
-                                        <form method="post" accept-charset="UTF-8">
-                                            <input type="hidden" name="start_date" value="<?php echo htmlspecialchars($filters['start_date']); ?>">
-                                            <input type="hidden" name="end_date" value="<?php echo htmlspecialchars($filters['end_date']); ?>">
-                                            <?php foreach ($filters['unit_ids'] as $unit_id): ?>
-                                                <input type="hidden" name="unit_ids[]" value="<?php echo htmlspecialchars($unit_id); ?>">
-                                            <?php endforeach; ?>
-                                            <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($filters['status_filter']); ?>">
-                                            <input type="hidden" name="payment_filter" value="<?php echo htmlspecialchars($filters['payment_filter']); ?>">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                            <button type="submit" name="generate_report" value="xls" class="btn btn-warning">
-                                                <i class="fas fa-file-excel me-1"></i>XLS Olarak İndir
-                                            </button>
-                                        </form>
                                     </div>
                                 </div>
                                 <?php
@@ -3426,7 +3097,6 @@ if (isset($_SESSION['error'])) {
                         <?php if (isset($login_error)): ?>
                             <div class="alert alert-danger"><?php echo $login_error; ?></div>
                         <?php endif; ?>
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                         <div class="mb-3">
                             <label for="login_username" class="form-label">Kullanıcı Adı</label>
                             <input type="text" class="form-control" id="login_username" name="username" required>
@@ -3678,13 +3348,6 @@ if (isset($_SESSION['error'])) {
                 document.body.appendChild(form);
                 form.submit();
             }
-        }
-    </script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/test/service-worker.js')
-                .then(() => console.log('✅ Service Worker yüklendi'))
-                .catch(err => console.log('SW hata:', err));
         }
     </script>
 </body>
