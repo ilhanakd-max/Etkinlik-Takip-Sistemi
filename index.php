@@ -2293,164 +2293,261 @@ if (isset($_SESSION['error'])) {
             <?php if ($maintenance_mode_enabled): ?>
                 <div class="alert alert-warning maintenance-alert" role="alert">
                     <h5 class="mb-1"><i class="fas fa-tools me-2"></i>Bakım Modu Aktif</h5>
-                    <p class="mb-0">Sitemizde planlı bakım çalışması yapılmaktadır. Bu süreçte bazı bilgiler güncelleniyor olabilir. Anlayışınız için teşekkür ederiz.</p>
+                    <p class="mb-0">Sitemizde planlı bakım çalışması yapılmaktadır. Bu süre boyunca ana sayfadaki içerik geçici olarak kapatılmıştır. Anlayışınız için teşekkür ederiz.</p>
                     <?php if (is_admin()): ?>
                         <p class="mb-0 mt-2 small text-muted">Not: Bakım modunu Admin Paneli &gt; Ayarlar bölümünden devre dışı bırakabilirsiniz.</p>
                     <?php endif; ?>
                 </div>
-            <?php endif; ?>
-            <?php if (isset($error) && $error): ?>
-                <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
-            <?php endif; ?>
-            <?php if (isset($message) && $message): ?>
-                <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
-            <?php endif; ?>
-            
-            <?php // YENİ: Duyurular Bölümü ?>
-            <?php if (!empty($announcements)): ?>
-                <div class="announcement-section">
-                    <div class="accordion" id="announcementsAccordion">
-                        <div class="accordion-item">
-                            <h2 class="accordion-header" id="headingOne">
-                                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAnnouncements" aria-expanded="true" aria-controls="collapseAnnouncements">
-                                    <i class="fas fa-bullhorn me-2"></i> Önemli Duyurular (<?php echo count($announcements); ?>)
-                                </button>
-                            </h2>
-                            <div id="collapseAnnouncements" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#announcementsAccordion">
-                                <div class="accordion-body">
-                                    <?php foreach ($announcements as $announcement): ?>
-                                        <div class="p-2 mb-2 border-bottom">
-                                            <p class="mb-1">
-                                                <?php 
-                                                // 48 saatten daha yeni ise "Yeni" etiketi göster
-                                                if (strtotime($announcement['created_at']) > time() - (48 * 3600)) {
-                                                    echo '<span class="badge bg-danger badge-new">YENİ</span>';
-                                                }
-                                                ?>
-                                                <?php echo nl2br(htmlspecialchars($announcement['content'])); ?>
-                                            </p>
-                                            <div class="announcement-meta">
-                                                <span>Yayınlanma: <?php echo turkish_date('d M Y, H:i', strtotime($announcement['created_at'])); ?></span>
-                                                <?php if ($announcement['show_author'] && !empty($announcement['full_name'])): ?>
-                                                    <span> | Yazar: <?php echo htmlspecialchars($announcement['full_name']); ?></span>
-                                                <?php endif; ?>
+            <?php else: ?>
+                <?php if (isset($error) && $error): ?>
+                    <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
+                <?php endif; ?>
+                <?php if (isset($message) && $message): ?>
+                    <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
+                <?php endif; ?>
+                
+                <?php // YENİ: Duyurular Bölümü ?>
+                <?php if (!empty($announcements)): ?>
+                    <div class="announcement-section">
+                        <div class="accordion" id="announcementsAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="headingOne">
+                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAnnouncements" aria-expanded="true" aria-controls="collapseAnnouncements">
+                                        <i class="fas fa-bullhorn me-2"></i> Önemli Duyurular (<?php echo count($announcements); ?>)
+                                    </button>
+                                </h2>
+                                <div id="collapseAnnouncements" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#announcementsAccordion">
+                                    <div class="accordion-body">
+                                        <?php foreach ($announcements as $announcement): ?>
+                                            <div class="p-2 mb-2 border-bottom">
+                                                <p class="mb-1">
+                                                    <?php 
+                                                    // 48 saatten daha yeni ise "Yeni" etiketi göster
+                                                    if (strtotime($announcement['created_at']) > time() - (48 * 3600)) {
+                                                        echo '<span class="badge bg-danger badge-new">YENİ</span>';
+                                                    }
+                                                    ?>
+                                                    <?php echo nl2br(htmlspecialchars($announcement['content'])); ?>
+                                                </p>
+                                                <div class="announcement-meta">
+                                                    <span>Yayınlanma: <?php echo turkish_date('d M Y, H:i', strtotime($announcement['created_at'])); ?></span>
+                                                    <?php if ($announcement['show_author'] && !empty($announcement['full_name'])): ?>
+                                                        <span> | Yazar: <?php echo htmlspecialchars($announcement['full_name']); ?></span>
+                                                    <?php endif; ?>
+                                                </div>
                                             </div>
-                                        </div>
-                                    <?php endforeach; ?>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            <?php endif; ?>
-            
-            <div class="row mb-4">
-                <div class="col-md-6">
-                    <div class="unit-selector card">
-                        <div class="card-body">
-                            <h5 class="card-title">Birim Seçimi</h5>
-                            <form method="get" accept-charset="UTF-8">
-                                <select class="form-select" name="unit_id" onchange="this.form.submit()">
-                                    <?php foreach ($units as $unit): ?>
-                                        <option value="<?php echo $unit['id']; ?>" <?php echo $selected_unit == $unit['id'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($unit['unit_name']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input type="hidden" name="month" value="<?php echo $selected_month; ?>">
-                                <input type="hidden" name="year" value="<?php echo $selected_year; ?>">
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="month-selector card">
-                        <div class="card-body">
-                            <h5 class="card-title">Ay Seçimi</h5>
-                            <form method="get" id="monthForm" accept-charset="UTF-8">
-                                <div class="input-group">
-                                    <select class="form-select" id="monthSelect" name="month" onchange="this.form.submit()">
-                                        <?php for ($m = 1; $m <= 12; $m++): ?>
-                                            <option value="<?php echo $m; ?>" <?php echo $selected_month == $m ? 'selected' : ''; ?>>
-                                                <?php echo $turkish_months[$m]; ?>
+                <?php endif; ?>
+                
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="unit-selector card">
+                            <div class="card-body">
+                                <h5 class="card-title">Birim Seçimi</h5>
+                                <form method="get" accept-charset="UTF-8">
+                                    <select class="form-select" name="unit_id" onchange="this.form.submit()">
+                                        <?php foreach ($units as $unit): ?>
+                                            <option value="<?php echo $unit['id']; ?>" <?php echo $selected_unit == $unit['id'] ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($unit['unit_name']); ?>
                                             </option>
-                                        <?php endfor; ?>
+                                        <?php endforeach; ?>
                                     </select>
-                                    <input type="number" class="form-control" name="year" value="<?php echo $selected_year; ?>" min="2000" max="2100">
-                                    <button class="btn btn-primary" type="submit">Git</button>
+                                    <input type="hidden" name="month" value="<?php echo $selected_month; ?>">
+                                    <input type="hidden" name="year" value="<?php echo $selected_year; ?>">
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="month-selector card">
+                            <div class="card-body">
+                                <h5 class="card-title">Ay Seçimi</h5>
+                                <form method="get" id="monthForm" accept-charset="UTF-8">
+                                    <div class="input-group">
+                                        <select class="form-select" id="monthSelect" name="month" onchange="this.form.submit()">
+                                            <?php for ($m = 1; $m <= 12; $m++): ?>
+                                                <option value="<?php echo $m; ?>" <?php echo $selected_month == $m ? 'selected' : ''; ?>>
+                                                    <?php echo $turkish_months[$m]; ?>
+                                                </option>
+                                            <?php endfor; ?>
+                                        </select>
+                                        <input type="number" class="form-control" name="year" value="<?php echo $selected_year; ?>" min="2000" max="2100">
+                                        <button class="btn btn-primary" type="submit">Git</button>
+                                    </div>
+                                    <input type="hidden" name="unit_id" value="<?php echo $selected_unit; ?>">
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Etkinlik Ara</h5>
+                        <form method="get" accept-charset="UTF-8">
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="search" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="Etkinlik adı, iletişim, notlar...">
+                                <button class="btn btn-primary" type="submit">Ara</button>
+                                <?php if (!empty($search_term)): ?>
+                                    <a href="?unit_id=<?php echo $selected_unit; ?>&month=<?php echo $selected_month; ?>&year=<?php echo $selected_year; ?>" class="btn btn-secondary">Aramayı Temizle</a>
+                                <?php endif; ?>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="legend card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Renk Anlamları</h5>
+                        <div class="d-flex flex-wrap gap-3">
+                            <?php // YENİ: Dinamik efsane (legend) ?>
+                            <?php foreach ($all_event_statuses as $key => $status): ?>
+                                <span class="badge badge-status-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
+                            <?php endforeach; ?>
+                            <?php foreach ($all_payment_statuses as $key => $status): ?>
+                                <span class="badge badge-payment-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="calendar-header" aria-hidden="true">
+                    <div class="calendar-header-day">Pazartesi</div>
+                    <div class="calendar-header-day">Salı</div>
+                    <div class="calendar-header-day">Çarşamba</div>
+                    <div class="calendar-header-day">Perşembe</div>
+                    <div class="calendar-header-day">Cuma</div>
+                    <div class="calendar-header-day">Cumartesi</div>
+                    <div class="calendar-header-day">Pazar</div>
+                </div>
+
+                <div class="calendar-view">
+                    <?php
+                    if (!empty($search_term)) {
+                        // ARAMA SONUÇLARI (DEĞİŞMEDİ)
+                        // Arama sonuçları her zaman dikey liste olarak kalır
+                        if (empty($grouped_events)) {
+                            echo '<div class="alert alert-info w-100">Arama kriterlerinize uygun etkinlik bulunamadı.</div>';
+                        } else {
+                            ksort($grouped_events);
+                            foreach ($grouped_events as $date => $day_events):
+                                $is_holiday = is_holiday($date, $pdo);
+                                $is_weekend = is_weekend($date);
+                                $class = '';
+                                if ($is_holiday) $class = 'holiday';
+                                elseif ($is_weekend) $class = 'weekend';
+                                if (empty($day_events)) $class .= ' no-events';
+                    ?>
+                                <div class="day-card <?php echo $class; ?>">
+                                    <div class="day-header">
+                                        <div class="day-header-content">
+                                            <span class="day-full-date">
+                                                <?php echo turkish_date('d M Y, l', strtotime($date)); ?>
+                                            </span>
+                                            <span class="day-number"><?php echo (int)date('d', strtotime($date)); ?></span>
+
+                                            <?php if ($is_holiday): ?>
+                                                <span class="badge bg-warning ms-2"><?php echo htmlspecialchars($is_holiday['holiday_name']); ?></span>
+                                            <?php elseif ($is_weekend): ?>
+                                                <span class="badge bg-info ms-2">Hafta Sonu</span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <?php if (is_admin()): ?>
+                                            <div class="day-header-actions">
+                                                <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal" onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
+                                                    <i class="fas fa-plus"></i>
+                                                </button>
+                                            </div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="day-content">
+                                        <?php foreach ($day_events as $event): ?>
+                                            <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
+                                                <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
+                                                <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
+                                                <?php if (!empty($event['contact_info'])): ?>
+                                                    <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
+                                                <?php endif; ?>
+                                                <?php if (!empty($event['notes'])): ?>
+                                                    <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
+                                                <?php endif; ?>
+                                                <div class="event-status">
+                                                    <?php // YENİ: Dinamik durum etiketleri ?>
+                                                    <?php
+                                                        $event_status = $event['status'] ?? '';
+                                                        $status_data = $all_event_statuses[$event_status] ?? null;
+                                                        if ($status_data):
+                                                    ?>
+                                                        <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
+                                                    <?php endif; ?>
+                                                    
+                                                    <?php 
+                                                    $event_payment_status = $event['payment_status'] ?? '';
+                                                    $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
+                                                    if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
+                                                    ?>
+                                                        <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <?php if (is_admin()): ?>
+                                                    <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
+                                                            data-event-id="<?php echo $event['id']; ?>"
+                                                            data-unit-id="<?php echo $event['unit_id']; ?>"
+                                                            data-event-date="<?php echo $event['event_date']; ?>"
+                                                            data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
+                                                            data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
+                                                            data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
+                                                            data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
+                                                            data-event-status="<?php echo $event['status'] ?? ''; ?>"
+                                                            data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
-                                <input type="hidden" name="unit_id" value="<?php echo $selected_unit; ?>">
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">Etkinlik Ara</h5>
-                    <form method="get" accept-charset="UTF-8">
-                        <div class="input-group">
-                            <input type="text" class="form-control" name="search" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="Etkinlik adı, iletişim, notlar...">
-                            <button class="btn btn-primary" type="submit">Ara</button>
-                            <?php if (!empty($search_term)): ?>
-                                <a href="?unit_id=<?php echo $selected_unit; ?>&month=<?php echo $selected_month; ?>&year=<?php echo $selected_year; ?>" class="btn btn-secondary">Aramayı Temizle</a>
-                            <?php endif; ?>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="legend card mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">Renk Anlamları</h5>
-                    <div class="d-flex flex-wrap gap-3">
-                        <?php // YENİ: Dinamik efsane (legend) ?>
-                        <?php foreach ($all_event_statuses as $key => $status): ?>
-                            <span class="badge badge-status-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
-                        <?php endforeach; ?>
-                        <?php foreach ($all_payment_statuses as $key => $status): ?>
-                            <span class="badge badge-payment-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="calendar-header" aria-hidden="true">
-                <div class="calendar-header-day">Pazartesi</div>
-                <div class="calendar-header-day">Salı</div>
-                <div class="calendar-header-day">Çarşamba</div>
-                <div class="calendar-header-day">Perşembe</div>
-                <div class="calendar-header-day">Cuma</div>
-                <div class="calendar-header-day">Cumartesi</div>
-                <div class="calendar-header-day">Pazar</div>
-            </div>
-
-            <div class="calendar-view">
-                <?php
-                if (!empty($search_term)) {
-                    // ARAMA SONUÇLARI (DEĞİŞMEDİ)
-                    // Arama sonuçları her zaman dikey liste olarak kalır
-                    if (empty($grouped_events)) {
-                        echo '<div class="alert alert-info w-100">Arama kriterlerinize uygun etkinlik bulunamadı.</div>';
+                    <?php
+                            endforeach;
+                        }
                     } else {
-                        ksort($grouped_events);
-                        foreach ($grouped_events as $date => $day_events):
+                        // TAKVİM GÖRÜNÜMÜ (GÜNCELLENDİ)
+                        $days_in_month = cal_days_in_month(CAL_GREGORIAN, $selected_month, $selected_year);
+                        $first_day_timestamp = strtotime("$selected_year-$selected_month-01");
+                        $start_day_of_week = (int)date('N', $first_day_timestamp); // 1 (Pzt) - 7 (Paz)
+
+                        // 1. Ayın ilk gününden önceki boş günler (Pazartesi 1 ise)
+                        for ($i = 1; $i < $start_day_of_week; $i++) {
+                            echo '<div class="day-card empty" aria-hidden="true"></div>';
+                        }
+                        
+                        // 2. Ayın günleri
+                        for ($day = 1; $day <= $days_in_month; $day++) {
+                            $date = sprintf("%04d-%02d-%02d", $selected_year, $selected_month, $day);
+                            $day_events = $grouped_events[$date] ?? [];
                             $is_holiday = is_holiday($date, $pdo);
                             $is_weekend = is_weekend($date);
                             $class = '';
                             if ($is_holiday) $class = 'holiday';
                             elseif ($is_weekend) $class = 'weekend';
                             if (empty($day_events)) $class .= ' no-events';
-                ?>
+                    ?>
                             <div class="day-card <?php echo $class; ?>">
                                 <div class="day-header">
                                     <div class="day-header-content">
                                         <span class="day-full-date">
                                             <?php echo turkish_date('d M Y, l', strtotime($date)); ?>
                                         </span>
-                                        <span class="day-number"><?php echo (int)date('d', strtotime($date)); ?></span>
-
+                                        <span class="day-number"><?php echo $day; ?></span>
+                                        
                                         <?php if ($is_holiday): ?>
                                             <span class="badge bg-warning ms-2"><?php echo htmlspecialchars($is_holiday['holiday_name']); ?></span>
                                         <?php elseif ($is_weekend): ?>
@@ -2459,177 +2556,81 @@ if (isset($_SESSION['error'])) {
                                     </div>
                                     <?php if (is_admin()): ?>
                                         <div class="day-header-actions">
-                                            <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal" onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
+                                            <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal"
+                                                    onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
                                                 <i class="fas fa-plus"></i>
                                             </button>
                                         </div>
                                     <?php endif; ?>
                                 </div>
                                 <div class="day-content">
-                                    <?php foreach ($day_events as $event): ?>
-                                        <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
-                                            <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
-                                            <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
-                                            <?php if (!empty($event['contact_info'])): ?>
-                                                <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
-                                            <?php endif; ?>
-                                            <?php if (!empty($event['notes'])): ?>
-                                                <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
-                                            <?php endif; ?>
-                                            <div class="event-status">
-                                                <?php // YENİ: Dinamik durum etiketleri ?>
-                                                <?php
-                                                    $event_status = $event['status'] ?? '';
-                                                    $status_data = $all_event_statuses[$event_status] ?? null;
-                                                    if ($status_data):
-                                                ?>
-                                                    <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
+                                    <?php if (empty($day_events)): ?>
+                                        <p class="text-muted text-center my-4">Etkinlik yok</p>
+                                    <?php else: ?>
+                                        <?php foreach ($day_events as $event): ?>
+                                            <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
+                                                <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
+                                                <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
+                                                <?php if (!empty($event['contact_info'])): ?>
+                                                    <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
                                                 <?php endif; ?>
-                                                
-                                                <?php 
-                                                $event_payment_status = $event['payment_status'] ?? '';
-                                                $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-                                                if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
-                                                ?>
-                                                    <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
+                                                <?php if (!empty($event['notes'])): ?>
+                                                    <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
+                                                <?php endif; ?>
+                                                <div class="event-status">
+                                                    <?php // YENİ: Dinamik durum etiketleri ?>
+                                                    <?php
+                                                        $event_status = $event['status'] ?? '';
+                                                        $status_data = $all_event_statuses[$event_status] ?? null;
+                                                        if ($status_data):
+                                                    ?>
+                                                        <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
+                                                    <?php endif; ?>
+                                                    
+                                                    <?php 
+                                                    $event_payment_status = $event['payment_status'] ?? '';
+                                                    $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
+                                                    if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
+                                                    ?>
+                                                        <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <?php if (is_admin()): ?>
+                                                    <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
+                                                            data-event-id="<?php echo $event['id']; ?>"
+                                                            data-unit-id="<?php echo $event['unit_id']; ?>"
+                                                            data-event-date="<?php echo $event['event_date']; ?>"
+                                                            data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
+                                                            data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
+                                                            data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
+                                                            data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
+                                                            data-event-status="<?php echo $event['status'] ?? ''; ?>"
+                                                            data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
                                                 <?php endif; ?>
                                             </div>
-                                            <?php if (is_admin()): ?>
-                                                <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                        data-event-id="<?php echo $event['id']; ?>"
-                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
-                                                        data-event-date="<?php echo $event['event_date']; ?>"
-                                                        data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
-                                                        data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
-                                                        data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
-                                                        data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
-                                                        data-event-status="<?php echo $event['status'] ?? ''; ?>"
-                                                        data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                <?php
-                        endforeach;
-                    }
-                } else {
-                    // TAKVİM GÖRÜNÜMÜ (GÜNCELLENDİ)
-                    $days_in_month = cal_days_in_month(CAL_GREGORIAN, $selected_month, $selected_year);
-                    $first_day_timestamp = strtotime("$selected_year-$selected_month-01");
-                    $start_day_of_week = (int)date('N', $first_day_timestamp); // 1 (Pzt) - 7 (Paz)
-
-                    // 1. Ayın ilk gününden önceki boş günler (Pazartesi 1 ise)
-                    for ($i = 1; $i < $start_day_of_week; $i++) {
-                        echo '<div class="day-card empty" aria-hidden="true"></div>';
-                    }
-                    
-                    // 2. Ayın günleri
-                    for ($day = 1; $day <= $days_in_month; $day++) {
-                        $date = sprintf("%04d-%02d-%02d", $selected_year, $selected_month, $day);
-                        $day_events = $grouped_events[$date] ?? [];
-                        $is_holiday = is_holiday($date, $pdo);
-                        $is_weekend = is_weekend($date);
-                        $class = '';
-                        if ($is_holiday) $class = 'holiday';
-                        elseif ($is_weekend) $class = 'weekend';
-                        if (empty($day_events)) $class .= ' no-events';
-                ?>
-                        <div class="day-card <?php echo $class; ?>">
-                            <div class="day-header">
-                                <div class="day-header-content">
-                                    <span class="day-full-date">
-                                        <?php echo turkish_date('d M Y, l', strtotime($date)); ?>
-                                    </span>
-                                    <span class="day-number"><?php echo $day; ?></span>
-                                    
-                                    <?php if ($is_holiday): ?>
-                                        <span class="badge bg-warning ms-2"><?php echo htmlspecialchars($is_holiday['holiday_name']); ?></span>
-                                    <?php elseif ($is_weekend): ?>
-                                        <span class="badge bg-info ms-2">Hafta Sonu</span>
+                                        <?php endforeach; ?>
                                     <?php endif; ?>
                                 </div>
-                                <?php if (is_admin()): ?>
-                                    <div class="day-header-actions">
-                                        <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
-                                            <i class="fas fa-plus"></i>
-                                        </button>
-                                    </div>
-                                <?php endif; ?>
                             </div>
-                            <div class="day-content">
-                                <?php if (empty($day_events)): ?>
-                                    <p class="text-muted text-center my-4">Etkinlik yok</p>
-                                <?php else: ?>
-                                    <?php foreach ($day_events as $event): ?>
-                                        <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
-                                            <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
-                                            <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
-                                            <?php if (!empty($event['contact_info'])): ?>
-                                                <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
-                                            <?php endif; ?>
-                                            <?php if (!empty($event['notes'])): ?>
-                                                <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
-                                            <?php endif; ?>
-                                            <div class="event-status">
-                                                <?php // YENİ: Dinamik durum etiketleri ?>
-                                                <?php
-                                                    $event_status = $event['status'] ?? '';
-                                                    $status_data = $all_event_statuses[$event_status] ?? null;
-                                                    if ($status_data):
-                                                ?>
-                                                    <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                                
-                                                <?php 
-                                                $event_payment_status = $event['payment_status'] ?? '';
-                                                $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-                                                if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
-                                                ?>
-                                                    <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                            </div>
-                                            <?php if (is_admin()): ?>
-                                                <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                        data-event-id="<?php echo $event['id']; ?>"
-                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
-                                                        data-event-date="<?php echo $event['event_date']; ?>"
-                                                        data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
-                                                        data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
-                                                        data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
-                                                        data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
-                                                        data-event-status="<?php echo $event['status'] ?? ''; ?>"
-                                                        data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                <?php
-                    } // for $day
-                    
-                    // 3. Ayın son gününden sonraki boş günler (Pazar 7 ise)
-                    $last_day_of_week = (int)date('N', strtotime("$selected_year-$selected_month-$days_in_month"));
-                    if ($last_day_of_week < 7) {
-                        for ($i = $last_day_of_week; $i < 7; $i++) {
-                            echo '<div class="day-card empty" aria-hidden="true"></div>';
+                    <?php
+                        } // for $day
+                        
+                        // 3. Ayın son gününden sonraki boş günler (Pazar 7 ise)
+                        $last_day_of_week = (int)date('N', strtotime("$selected_year-$selected_month-$days_in_month"));
+                        if ($last_day_of_week < 7) {
+                            for ($i = $last_day_of_week; $i < 7; $i++) {
+                                echo '<div class="day-card empty" aria-hidden="true"></div>';
+                            }
                         }
-                    }
-                } // end if $search_term
-                ?>
-            </div>
+                    } // end if $search_term
+                    ?>
+                </div>
+            <?php endif; ?>
         </div>
     <?php
     } elseif ($page === 'admin') {
