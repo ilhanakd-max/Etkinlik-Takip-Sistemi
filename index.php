@@ -236,6 +236,76 @@ function get_recurring_holiday_definitions() {
     ];
 }
 
+function get_variable_islamic_holidays_for_year($year) {
+    static $cache = [];
+
+    if (isset($cache[$year])) {
+        return $cache[$year];
+    }
+
+    if (!class_exists('IntlCalendar')) {
+        $cache[$year] = [];
+        return $cache[$year];
+    }
+
+    try {
+        $timezone = new DateTimeZone('Europe/Istanbul');
+        $calendar = IntlCalendar::createInstance($timezone, 'tr_TR@calendar=islamic-umalqura');
+
+        if (!$calendar) {
+            $calendar = IntlCalendar::createInstance($timezone, 'tr_TR@calendar=islamic');
+        }
+
+        if (!$calendar) {
+            $cache[$year] = [];
+            return $cache[$year];
+        }
+
+        $start = new DateTimeImmutable(sprintf('%04d-01-01 00:00:00', (int) $year), $timezone);
+        $end = $start->modify('+1 year');
+        $current = $start;
+
+        $ramazan_names = [
+            1 => 'Ramazan Bayramı 1. Gün',
+            2 => 'Ramazan Bayramı 2. Gün',
+            3 => 'Ramazan Bayramı 3. Gün',
+        ];
+
+        $kurban_names = [
+            10 => 'Kurban Bayramı 1. Gün',
+            11 => 'Kurban Bayramı 2. Gün',
+            12 => 'Kurban Bayramı 3. Gün',
+            13 => 'Kurban Bayramı 4. Gün',
+        ];
+
+        $holidays = [];
+
+        while ($current < $end) {
+            $timestamp = (int) $current->format('U');
+            $calendar->setTime($timestamp * 1000);
+
+            $month = $calendar->get(IntlCalendar::FIELD_MONTH);
+            $day = $calendar->get(IntlCalendar::FIELD_DAY_OF_MONTH);
+
+            if ($month === 9 && isset($ramazan_names[$day])) {
+                $holidays[$current->format('Y-m-d')] = $ramazan_names[$day];
+            } elseif ($month === 11 && isset($kurban_names[$day])) {
+                $holidays[$current->format('Y-m-d')] = $kurban_names[$day];
+            }
+
+            $current = $current->modify('+1 day');
+        }
+
+        ksort($holidays);
+        $cache[$year] = $holidays;
+    } catch (Exception $e) {
+        error_log('Dinamik dini tatiller hesaplanırken hata oluştu: ' . $e->getMessage());
+        $cache[$year] = [];
+    }
+
+    return $cache[$year];
+}
+
 function get_recurring_holidays_for_year($year) {
     $definitions = get_recurring_holiday_definitions();
     $holidays = [];
@@ -243,6 +313,14 @@ function get_recurring_holidays_for_year($year) {
     foreach ($definitions as $month_day => $name) {
         $holidays[sprintf('%04d-%s', (int) $year, $month_day)] = $name;
     }
+
+    $variable_holidays = get_variable_islamic_holidays_for_year((int) $year);
+
+    foreach ($variable_holidays as $date => $name) {
+        $holidays[$date] = $name;
+    }
+
+    ksort($holidays);
 
     return $holidays;
 }
@@ -256,7 +334,14 @@ function get_recurring_holiday_for_date($date) {
     $month_day = date('m-d', $timestamp);
     $definitions = get_recurring_holiday_definitions();
 
-    return $definitions[$month_day] ?? null;
+    if (isset($definitions[$month_day])) {
+        return $definitions[$month_day];
+    }
+
+    $year = (int) date('Y', $timestamp);
+    $variable_holidays = get_variable_islamic_holidays_for_year($year);
+
+    return $variable_holidays[$date] ?? null;
 }
 
 // Hafta sonu kontrolü
