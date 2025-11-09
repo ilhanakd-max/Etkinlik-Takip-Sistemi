@@ -25,6 +25,17 @@ try {
     // Saat dilimini ayarla
     $pdo->exec("SET time_zone = '+03:00'");
 
+    // UYGULAMA AYARLARI TABLOSUNU OLUŞTUR (VARSA ATLA)
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key VARCHAR(100) PRIMARY KEY,
+            setting_value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    } catch(PDOException $e) {
+        error_log('Ayar tablosu oluşturulamadı: ' . $e->getMessage());
+    }
+
 } catch(PDOException $e) {
     // GÜVENLİK GÜNCELLEMESİ: Ayrıntılı hata mesajlarını kullanıcıya gösterme.
     // Bunları bir log dosyasına yazmak daha güvenlidir.
@@ -80,6 +91,8 @@ try {
         die("Durum bilgileri yüklenirken bir sorun oluştu.");
     }
 }
+
+$maintenance_mode_enabled = get_app_setting('maintenance_mode', '0') === '1';
 
 
 // DÜZELTME: Karakter seti sorunlarını önlemek için mb_internal_encoding ayarı
@@ -155,6 +168,37 @@ function clean_input($data) {
     $sanitized = trim(strip_tags((string) $data));
     // Kontrol karakterlerini kaldır
     return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
+}
+
+// Uygulama ayarları fonksiyonları
+function get_app_setting($key, $default = null) {
+    global $pdo;
+
+    try {
+        $stmt = $pdo->prepare("SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1");
+        $stmt->execute([$key]);
+        $value = $stmt->fetchColumn();
+        if ($value === false) {
+            return $default;
+        }
+        return $value;
+    } catch(PDOException $e) {
+        error_log("Ayar okuma hatası ({$key}): " . $e->getMessage());
+        return $default;
+    }
+}
+
+function set_app_setting($key, $value) {
+    global $pdo;
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+        $stmt->execute([$key, $value]);
+        return true;
+    } catch(PDOException $e) {
+        error_log("Ayar kaydetme hatası ({$key}): " . $e->getMessage());
+        return false;
+    }
 }
 
 function is_valid_date_string($date) {
@@ -1268,7 +1312,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $stmt_payment->execute([clean_input($values['display_name']), clean_input($values['color']), $key]);
                         }
                     }
-                    
+
+                    $maintenance_mode_value = isset($_POST['maintenance_mode']) ? '1' : '0';
+                    if (!set_app_setting('maintenance_mode', $maintenance_mode_value)) {
+                        throw new Exception('Bakım modu ayarı kaydedilemedi.');
+                    }
+
                     $pdo->commit();
                     $_SESSION['message'] = "Ayarlar başarıyla güncellendi!";
                 } catch(Exception $e) {
@@ -1357,7 +1406,13 @@ if (isset($_SESSION['error'])) {
             color: #334155;
             line-height: 1.6;
         }
-        
+
+        .maintenance-alert {
+            border-left: 6px solid var(--warning-color);
+            box-shadow: var(--card-shadow);
+            background: #fffbea;
+        }
+
         .navbar {
             background: linear-gradient(135deg, var(--primary-color), #2c5282);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -2235,6 +2290,15 @@ if (isset($_SESSION['error'])) {
         }
         ?>
         <div class="container mt-4">
+            <?php if ($maintenance_mode_enabled): ?>
+                <div class="alert alert-warning maintenance-alert" role="alert">
+                    <h5 class="mb-1"><i class="fas fa-tools me-2"></i>Bakım Modu Aktif</h5>
+                    <p class="mb-0">Sitemizde planlı bakım çalışması yapılmaktadır. Bu süreçte bazı bilgiler güncelleniyor olabilir. Anlayışınız için teşekkür ederiz.</p>
+                    <?php if (is_admin()): ?>
+                        <p class="mb-0 mt-2 small text-muted">Not: Bakım modunu Admin Paneli &gt; Ayarlar bölümünden devre dışı bırakabilirsiniz.</p>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
             <?php if (isset($error) && $error): ?>
                 <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
@@ -3259,7 +3323,13 @@ if (isset($_SESSION['error'])) {
                         
                         <form method="post" accept-charset="UTF-8">
                             <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                            
+
+                            <div class="form-check form-switch mb-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="maintenance_mode" name="maintenance_mode" value="1" <?php echo $maintenance_mode_enabled ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="maintenance_mode"><strong>Bakım Modu</strong> - Ziyaretçilere bakım mesajı göster</label>
+                                <div class="form-text">Bakım modunu etkinleştirdiğinizde ana sayfada ziyaretçilere bilgilendirme mesajı gösterilir. Yönetici paneli kullanılmaya devam edebilir.</div>
+                            </div>
+
                             <h6>Etkinlik Durumları</h6>
                             <div class="table-responsive mb-4">
                                 <table class="table">
