@@ -906,15 +906,7 @@ if (isset($_SESSION['error'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1a365d">
-    <meta name="application-name" content="Çeşme Belediyesi Etkinlik Takip Sistemi">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="mobile-web-app-capable" content="yes">
     <title>Çeşme Belediyesi Kültür Müdürlüğü - Etkinlik Takvimi</title>
-    <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
-    <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="assets/icons/icon-512.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -3356,15 +3348,6 @@ if (isset($_SESSION['error'])) {
                 document.body.appendChild(form);
                 form.submit();
             }
-        }
-    </script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js').catch(error => {
-                    console.error('Service worker kaydı başarısız:', error);
-                });
-            });
         }
     </script>
 </body>
