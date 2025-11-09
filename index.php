@@ -906,7 +906,18 @@ if (isset($_SESSION['error'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="application-name" content="Çeşme Belediyesi Etkinlik Takip Sistemi">
+    <meta name="apple-mobile-web-app-title" content="Etkinlik Takip">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a365d">
     <title>Çeşme Belediyesi Kültür Müdürlüğü - Etkinlik Takvimi</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icons/icon-512.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="assets/icons/icon-192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="assets/icons/icon-512.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -3123,6 +3134,15 @@ if (isset($_SESSION['error'])) {
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('service-worker.js').catch(function (error) {
+                    console.error('Service worker kaydedilemedi:', error);
+                });
+            });
+        }
+    </script>
     <script>
         // YENİ: PHP'den dinamik durum haritalarını JS'e aktar
         const allEventStatuses = <?php echo json_encode($all_event_statuses); ?>;
