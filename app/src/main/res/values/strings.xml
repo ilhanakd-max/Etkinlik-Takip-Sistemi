@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">TvMouseNavigator</string>
+    <string name="start_service">Servisi Başlat</string>
+    <string name="stop_service">Servisi Durdur</string>
+    <string name="overlay_permission_rationale">Lütfen imleç için ekran üstü izin verin.</string>
+    <string name="notification_channel_name">TV Mouse Cursor</string>
+    <string name="notification_channel_description">Android TV için yüzen imleç servisi.</string>
+    <string name="notification_title">TvMouseNavigator aktif</string>
+    <string name="notification_message">TV kumandası ile imleci kontrol edebilirsiniz.</string>
+    <string name="accessibility_service_label">TvMouseNavigator Cursor Service</string>
+    <string name="accessibility_service_description">TV kumandası ile ekran dokunuşları oluşturur.</string>
+</resources>
