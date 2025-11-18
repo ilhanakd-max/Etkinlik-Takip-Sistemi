@@ -48,7 +48,7 @@ session_start();
 
 // YENİ: Dinamik durum ve ödeme bilgilerini veritabanından çek
 // Bu değişkenler uygulamanın her yerinde kullanılacak
-global $all_event_statuses, $all_payment_statuses;
+global $all_event_statuses, $all_payment_statuses, $all_sectors;
 try {
     $all_event_statuses = [];
     foreach ($pdo->query("SELECT * FROM event_statuses") as $row) {
@@ -79,6 +79,68 @@ try {
         error_log("Durum bilgileri çekilirken hata: " . $e->getMessage());
         die("Durum bilgileri yüklenirken bir sorun oluştu.");
     }
+}
+
+// YENİ: Sektör bilgilerini çek ve yardımcı metinleri hazırla
+$all_sectors = [];
+try {
+    foreach ($pdo->query("SELECT * FROM sektorler ORDER BY ad") as $row) {
+        $all_sectors[$row['id']] = $row;
+    }
+} catch (PDOException $e) {
+    error_log("Sektör bilgileri alınamadı: " . $e->getMessage());
+}
+
+function get_sector_meta($sector) {
+    $slug = is_array($sector) ? ($sector['slug'] ?? '') : (string)$sector;
+    $map = [
+        'avukat' => [
+            'calendar_title' => 'Avukat Görüşme Takvimi',
+            'new_title' => 'Yeni Görüşme',
+            'name_label' => 'Müvekkil Adı',
+            'contact_label' => 'Telefon',
+            'notes_label' => 'Konu / Dava',
+            'date_label' => 'Görüşme Tarihi',
+            'time_label' => 'Görüşme Saati'
+        ],
+        'psikolog' => [
+            'calendar_title' => 'Psikolog Seans Planlama',
+            'new_title' => 'Yeni Seans',
+            'name_label' => 'Danışan Adı',
+            'contact_label' => 'Telefon',
+            'notes_label' => 'Seans Türü',
+            'date_label' => 'Seans Tarihi',
+            'time_label' => 'Seans Saati'
+        ],
+        'arac-kiralama' => [
+            'calendar_title' => 'Araç Kiralama Takvimi',
+            'new_title' => 'Yeni Rezervasyon',
+            'name_label' => 'Müşteri Adı',
+            'contact_label' => 'Telefon',
+            'notes_label' => 'Araç (Marka/Model/Plaka)',
+            'date_label' => 'Alış Tarihi',
+            'time_label' => 'Alış / Teslim Saati'
+        ],
+        'fotografci' => [
+            'calendar_title' => 'Fotoğraf Çekim Rezervasyonu',
+            'new_title' => 'Yeni Çekim',
+            'name_label' => 'Müşteri Adı',
+            'contact_label' => 'Telefon',
+            'notes_label' => 'Çekim Türü / Mekan',
+            'date_label' => 'Çekim Tarihi',
+            'time_label' => 'Çekim Saati'
+        ]
+    ];
+
+    return $map[$slug] ?? [
+        'calendar_title' => 'Ajanda ve Rezervasyon Takvimi',
+        'new_title' => 'Yeni Kayıt',
+        'name_label' => 'Müşteri Adı',
+        'contact_label' => 'Telefon',
+        'notes_label' => 'Notlar',
+        'date_label' => 'Tarih',
+        'time_label' => 'Saat'
+    ];
 }
 
 
@@ -630,7 +692,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: ' . $redirect_path);
                     exit;
                 } else {
-                    $login_error = "Geçersiz kullanıcı adı veya şifre!";
+                    $login_error = "Kullanıcı adı veya şifre hatalı.";
                 }
             }
         }
@@ -748,7 +810,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // TXT/DOC/XLS oluşturma
             if (!empty($export_type) && in_array($export_type, ['txt', 'doc', 'xls'], true)) {
-                $title = "Çeşme Belediyesi Kültür Müdürlüğü Etkinlik Raporu";
+                $title = "Ajanda ve Rezervasyon Raporu";
                 $date_range = turkish_date('d M Y', strtotime($start_date)) . ' - ' . turkish_date('d M Y', strtotime($end_date));
                 $filters = [];
                 if (!empty($unit_ids) && !in_array('all', $unit_ids)) {
@@ -814,6 +876,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $id = isset($_POST['event_id']) ? (int)$_POST['event_id'] : 0;
                 $unit_id = clean_input($_POST['unit_id']);
+                $sektor_id = isset($_POST['sektor_id']) ? (int)$_POST['sektor_id'] : 0;
                 $date = clean_input($_POST['event_date']);
                 $name = clean_input($_POST['event_name']);
                 $time = clean_input($_POST['event_time']);
@@ -828,17 +891,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 try {
                     if ($id > 0) {
-                        $sql = "UPDATE events SET unit_id = ?, event_date = ?, event_name = ?, event_time = ?,
+                        $sql = "UPDATE events SET unit_id = ?, sektor_id = ?, event_date = ?, event_name = ?, event_time = ?,
                                 contact_info = ?, notes = ?, status = ?, payment_status = ?, updated_at = NOW()
                                 WHERE id = ?";
                         $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$unit_id, $date, $name, $time, $contact, $notes, $status, $payment, $id]);
+                        $stmt->execute([$unit_id, $sektor_id, $date, $name, $time, $contact, $notes, $status, $payment, $id]);
                         $_SESSION['message'] = "Etkinlik başarıyla güncellendi!";
                     } else {
-                        $sql = "INSERT INTO events (unit_id, event_date, event_name, event_time, contact_info, notes, status, payment_status)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                        $sql = "INSERT INTO events (unit_id, sektor_id, event_date, event_name, event_time, contact_info, notes, status, payment_status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
                         $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$unit_id, $date, $name, $time, $contact, $notes, $status, $payment]);
+                        $stmt->execute([$unit_id, $sektor_id, $date, $name, $time, $contact, $notes, $status, $payment]);
                         $_SESSION['message'] = "Etkinlik başarıyla eklendi!";
                     }
                     if (isset($_POST['source_page']) && $_POST['source_page'] == 'index') {
@@ -906,6 +969,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             header("Location: ?page=admin&tab=units");
+            exit;
+        }
+
+        // Sektör işlemleri
+        if (isset($_POST['save_sector'])) {
+            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
+                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
+            } else {
+                $id = isset($_POST['sector_id']) ? (int)$_POST['sector_id'] : 0;
+                $ad = clean_input($_POST['sector_ad']);
+                $aciklama = clean_input($_POST['sector_aciklama']);
+                $aktif = isset($_POST['sector_aktif']) ? 1 : 0;
+                $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9-]+/', '-', $ad), '-'));
+                try {
+                    if ($id > 0) {
+                        $sql = "UPDATE sektorler SET ad = ?, slug = ?, aciklama = ?, aktif = ? WHERE id = ?";
+                        $stmt = $pdo->prepare($sql);
+                        $stmt->execute([$ad, $slug, $aciklama, $aktif, $id]);
+                        $_SESSION['message'] = "Sektör başarıyla güncellendi.";
+                    } else {
+                        $sql = "INSERT INTO sektorler (ad, slug, aciklama, aktif) VALUES (?, ?, ?, ?)";
+                        $stmt = $pdo->prepare($sql);
+                        $stmt->execute([$ad, $slug, $aciklama, $aktif]);
+                        $_SESSION['message'] = "Sektör başarıyla eklendi.";
+                    }
+                } catch(PDOException $e) {
+                    error_log("Sektör kaydetme hatası: " . $e->getMessage());
+                    $_SESSION['error'] = "Sektör kaydedilirken bir hata oluştu.";
+                }
+            }
+            header("Location: ?page=admin&tab=sectors");
+            exit;
+        }
+
+        if (isset($_POST['delete_sector'])) {
+            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
+                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
+            } else {
+                $id = (int)$_POST['sector_id'];
+                try {
+                    $check = $pdo->prepare("SELECT COUNT(*) FROM events WHERE sektor_id = ?");
+                    $check->execute([$id]);
+                    $count = (int)$check->fetchColumn();
+                    if ($count > 0) {
+                        $_SESSION['error'] = "Bu sektöre bağlı kayıtlar olduğu için silinemez.";
+                    } else {
+                        $stmt = $pdo->prepare("DELETE FROM sektorler WHERE id = ?");
+                        $stmt->execute([$id]);
+                        $_SESSION['message'] = "Sektör başarıyla silindi.";
+                    }
+                } catch(PDOException $e) {
+                    error_log("Sektör silme hatası: " . $e->getMessage());
+                    $_SESSION['error'] = "Silme işlemi sırasında bir hata oluştu.";
+                }
+            }
+            header("Location: ?page=admin&tab=sectors");
             exit;
         }
 
@@ -1145,6 +1264,18 @@ if (!in_array($page, $allowed_pages, true)) {
     $page = 'index';
 }
 
+$selected_sector_id = null;
+if (isset($_GET['sektor_id']) && $_GET['sektor_id'] === '') {
+    $selected_sector_id = 0; // Tümü
+} else {
+    $selected_sector_id = filter_input(INPUT_GET, 'sektor_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+}
+if ($selected_sector_id === false || $selected_sector_id === null || ($selected_sector_id > 0 && !isset($all_sectors[$selected_sector_id]))) {
+    $selected_sector_id = !empty($all_sectors) ? array_key_first($all_sectors) : 0;
+}
+$selected_sector = ($selected_sector_id && isset($all_sectors[$selected_sector_id])) ? $all_sectors[$selected_sector_id] : null;
+$sector_meta = get_sector_meta($selected_sector);
+
 $unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 if ($unit_id === false || $unit_id === null) {
     $unit_id = 1;
@@ -1178,7 +1309,7 @@ if (isset($_SESSION['error'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Çeşme Belediyesi Kültür Müdürlüğü - Etkinlik Takvimi</title>
+    <title>Küçük İşletmeler İçin Ajanda + Rezervasyon Paneli</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -1980,10 +2111,10 @@ if (isset($_SESSION['error'])) {
         <div class="container">
             <a class="navbar-brand" href="?page=index">
                 <span class="brand-title">
-                    <i class="fas fa-landmark"></i>
-                    <span class="brand-name">Çeşme Belediyesi Kültür Müdürlüğü</span>
+                    <i class="fas fa-calendar-check"></i>
+                    <span class="brand-name">Küçük İşletmeler Ajanda & Rezervasyon</span>
                 </span>
-                <span class="brand-subtitle">Etkinlik Takip Uygulaması</span>
+                <span class="brand-subtitle">Çok sektörlü randevu ve rezervasyon paneli</span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -2010,7 +2141,7 @@ if (isset($_SESSION['error'])) {
                         </li>
                     <?php else: ?>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#loginModal">Admin Girişi</a>
+                            <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#loginModal">Yönetici Girişi</a>
                         </li>
                     <?php endif; ?>
                 </ul>
@@ -2044,9 +2175,10 @@ if (isset($_SESSION['error'])) {
         $selected_unit = $unit_id;
         $search_term = isset($_GET['search']) ? clean_input($_GET['search']) : '';
         try {
-            $sql = "SELECT e.*, u.unit_name, u.color
+            $sql = "SELECT e.*, u.unit_name, u.color, s.ad AS sektor_ad, s.slug AS sektor_slug
                     FROM events e
-                    JOIN units u ON e.unit_id = u.id";
+                    JOIN units u ON e.unit_id = u.id
+                    LEFT JOIN sektorler s ON e.sektor_id = s.id";
             $params = [];
             $where_clauses = [];
             
@@ -2073,6 +2205,11 @@ if (isset($_SESSION['error'])) {
                 $where_clauses[] = "MONTH(event_date) = :month";
                 $params[':month'] = $selected_month;
             }
+            if ($selected_sector_id) {
+                $where_clauses[] = "e.sektor_id = :sector_id";
+                $params[':sector_id'] = $selected_sector_id;
+            }
+
             if (!empty($where_clauses)) {
                 $sql .= " WHERE " . implode(" AND ", $where_clauses);
             }
@@ -2096,7 +2233,32 @@ if (isset($_SESSION['error'])) {
             <?php if (isset($message) && $message): ?>
                 <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
             <?php endif; ?>
-            
+
+            <div class="row mb-3 g-3">
+                <div class="col-md-6">
+                    <div class="card p-3">
+                        <form method="get" class="row g-2 align-items-end">
+                            <input type="hidden" name="page" value="index">
+                            <div class="col-12">
+                                <label class="form-label fw-semibold" for="sektor_id">Sektör Filtresi</label>
+                                <select class="form-select" id="sektor_id" name="sektor_id" onchange="this.form.submit()">
+                                    <option value="">Tümü</option>
+                                    <?php foreach ($all_sectors as $sid => $sector): ?>
+                                        <option value="<?php echo $sid; ?>" <?php echo ($selected_sector_id === $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card p-3">
+                        <div class="fw-semibold mb-1">Aktif Başlık</div>
+                        <div><?php echo htmlspecialchars($sector_meta['calendar_title']); ?></div>
+                    </div>
+                </div>
+            </div>
+
             <?php // YENİ: Duyurular Bölümü ?>
             <?php if (!empty($announcements)): ?>
                 <div class="announcement-section">
@@ -2259,7 +2421,12 @@ if (isset($_SESSION['error'])) {
                                 <div class="day-content">
                                     <?php foreach ($day_events as $event): ?>
                                         <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
-                                            <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <h6 class="mb-0"><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
+                                                <?php if (!empty($event['sektor_ad'])): ?>
+                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars($event['sektor_ad']); ?></span>
+                                                <?php endif; ?>
+                                            </div>
                                             <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
                                             <?php if (!empty($event['contact_info'])): ?>
                                                 <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
@@ -2288,6 +2455,7 @@ if (isset($_SESSION['error'])) {
                                             <?php if (is_admin()): ?>
                                                 <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
                                                         data-event-id="<?php echo $event['id']; ?>"
+                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
                                                         data-unit-id="<?php echo $event['unit_id']; ?>"
                                                         data-event-date="<?php echo $event['event_date']; ?>"
                                                         data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
@@ -2389,6 +2557,7 @@ if (isset($_SESSION['error'])) {
                                             <?php if (is_admin()): ?>
                                                 <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
                                                         data-event-id="<?php echo $event['id']; ?>"
+                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
                                                         data-unit-id="<?php echo $event['unit_id']; ?>"
                                                         data-event-date="<?php echo $event['event_date']; ?>"
                                                         data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
@@ -2429,7 +2598,7 @@ if (isset($_SESSION['error'])) {
             exit;
         }
         $tab = isset($_GET['tab']) ? clean_input($_GET['tab']) : 'events';
-        $allowed_tabs = ['events', 'units', 'holidays', 'announcements', 'reports', 'users', 'settings'];
+        $allowed_tabs = ['events', 'units', 'holidays', 'announcements', 'reports', 'users', 'settings', 'sectors'];
         if (!in_array($tab, $allowed_tabs, true)) {
             $tab = 'events';
         }
@@ -2438,6 +2607,10 @@ if (isset($_SESSION['error'])) {
         $filter_unit_id = filter_input(INPUT_GET, 'filter_unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($filter_unit_id === false || $filter_unit_id === null) {
             $filter_unit_id = 0;
+        }
+        $filter_sector_id = filter_input(INPUT_GET, 'filter_sector_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($filter_sector_id === false || $filter_sector_id === null) {
+            $filter_sector_id = 0;
         }
         $filter_start_date = isset($_GET['filter_start_date']) ? clean_input($_GET['filter_start_date']) : '';
         if (!empty($filter_start_date) && !is_valid_date_string($filter_start_date)) {
@@ -2473,6 +2646,7 @@ if (isset($_SESSION['error'])) {
             <ul class="nav nav-tabs mb-4">
                 <li class="nav-item"><a class="nav-link <?php echo $tab === 'events' ? 'active' : ''; ?>" href="?page=admin&tab=events">Etkinlik Yönetimi</a></li>
                 <li class="nav-item"><a class="nav-link <?php echo $tab === 'units' ? 'active' : ''; ?>" href="?page=admin&tab=units">Birim Yönetimi</a></li>
+                <li class="nav-item"><a class="nav-link <?php echo $tab === 'sectors' ? 'active' : ''; ?>" href="?page=admin&tab=sectors">Sektör Yönetimi</a></li>
                 <li class="nav-item"><a class="nav-link <?php echo $tab === 'holidays' ? 'active' : ''; ?>" href="?page=admin&tab=holidays">Tatil Yönetimi</a></li>
                 <li class="nav-item"><a class="nav-link <?php echo $tab === 'announcements' ? 'active' : ''; ?>" href="?page=admin&tab=announcements">Duyuru Yönetimi</a></li>
                 <li class="nav-item"><a class="nav-link <?php echo $tab === 'reports' ? 'active' : ''; ?>" href="?page=admin&tab=reports">Raporlama</a></li>
@@ -2494,6 +2668,15 @@ if (isset($_SESSION['error'])) {
                                 <input type="hidden" name="page" value="admin">
                                 <input type="hidden" name="tab" value="events">
                                 <div class="row g-3">
+                                    <div class="col-md-3">
+                                        <label for="filter_sector_id" class="form-label">Sektör</label>
+                                        <select class="form-select" id="filter_sector_id" name="filter_sector_id">
+                                            <option value="">Tüm Sektörler</option>
+                                            <?php foreach ($all_sectors as $sid => $sector): ?>
+                                                <option value="<?php echo $sid; ?>" <?php echo ($filter_sector_id == $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
                                     <div class="col-md-3">
                                         <label for="filter_unit_id" class="form-label">Birim</label>
                                         <select class="form-select" id="filter_unit_id" name="filter_unit_id">
@@ -2565,6 +2748,7 @@ if (isset($_SESSION['error'])) {
                                     <tr>
                                         <th>ID</th>
                                         <th>Tarih</th>
+                                        <th>Sektör</th>
                                         <th>Birim</th>
                                         <th>Etkinlik Adı</th>
                                         <th>Saat</th>
@@ -2579,9 +2763,10 @@ if (isset($_SESSION['error'])) {
                                     try {
                                         // GÜNCELLEME: Arama ve filtreleme terimlerine göre filtreleme yap
                                         $params_admin = [];
-                                        $sql = "SELECT e.*, u.unit_name
+                                        $sql = "SELECT e.*, u.unit_name, s.ad AS sektor_ad
                                                 FROM events e
-                                                JOIN units u ON e.unit_id = u.id";
+                                                JOIN units u ON e.unit_id = u.id
+                                                LEFT JOIN sektorler s ON e.sektor_id = s.id";
                                         
                                         $where_clauses_admin = [];
 
@@ -2600,6 +2785,10 @@ if (isset($_SESSION['error'])) {
                                         if (!empty($filter_unit_id)) {
                                             $where_clauses_admin[] = "e.unit_id = :unit_id";
                                             $params_admin[':unit_id'] = $filter_unit_id;
+                                        }
+                                        if (!empty($filter_sector_id)) {
+                                            $where_clauses_admin[] = "e.sektor_id = :sector_id";
+                                            $params_admin[':sector_id'] = $filter_sector_id;
                                         }
                                         if (!empty($filter_start_date)) {
                                             $where_clauses_admin[] = "e.event_date >= :start_date";
@@ -2645,6 +2834,7 @@ if (isset($_SESSION['error'])) {
                                             <tr>
                                                 <td><?php echo $event['id']; ?></td>
                                                 <td><?php echo turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')); ?></td>
+                                                <td><?php echo htmlspecialchars($event['sektor_ad'] ?? '-'); ?></td>
                                                 <td><?php echo htmlspecialchars($event['unit_name'] ?? ''); ?></td>
                                                 <td><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></td>
                                                 <td><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></td>
@@ -2654,8 +2844,9 @@ if (isset($_SESSION['error'])) {
                                                 <td class="actions">
                                                     <div class="action-buttons d-flex justify-content-center">
                                                         <button class="btn btn-sm btn-primary edit-event" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                                data-event-id="<?php echo $event['id']; ?>"
-                                                                data-unit-id="<?php echo $event['unit_id']; ?>"
+                                                        data-event-id="<?php echo $event['id']; ?>"
+                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
+                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
                                                                 data-event-date="<?php echo $event['event_date']; ?>"
                                                                 data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
                                                                 data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
@@ -2734,6 +2925,62 @@ if (isset($_SESSION['error'])) {
                                         <?php endforeach; ?>
                                     <?php } catch(PDOException $e) { ?>
                                         <tr><td colspan="5">Birimler getirilirken hata oluştu.</td></tr>
+                                    <?php } ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php elseif ($tab === 'sectors'): ?>
+                        <h5 class="card-title">Sektör Yönetimi</h5>
+                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#sectorModal" onclick="newSector()">
+                            <i class="fas fa-plus me-1"></i>Yeni Sektör Ekle
+                        </button>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Sektör Adı</th>
+                                        <th>Açıklama</th>
+                                        <th>Durum</th>
+                                        <th class="actions">İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php
+                                    try {
+                                        $sql = "SELECT s.*, COUNT(e.id) AS event_count FROM sektorler s LEFT JOIN events e ON e.sektor_id = s.id GROUP BY s.id ORDER BY s.ad";
+                                        $stmt = $pdo->prepare($sql);
+                                        $stmt->execute();
+                                        $sektorler = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                                        foreach ($sektorler as $sektor):
+                                    ?>
+                                            <tr>
+                                                <td><?php echo $sektor['id']; ?></td>
+                                                <td><?php echo htmlspecialchars($sektor['ad']); ?></td>
+                                                <td><?php echo htmlspecialchars($sektor['aciklama'] ?? ''); ?></td>
+                                                <td><?php echo $sektor['aktif'] ? 'Aktif' : 'Pasif'; ?></td>
+                                                <td class="actions">
+                                                    <div class="action-buttons d-flex justify-content-center">
+                                                        <button class="btn btn-sm btn-primary edit-sector" data-bs-toggle="modal" data-bs-target="#sectorModal"
+                                                                data-sector-id="<?php echo $sektor['id']; ?>"
+                                                                data-sector-ad="<?php echo htmlspecialchars($sektor['ad']); ?>"
+                                                                data-sector-aciklama="<?php echo htmlspecialchars($sektor['aciklama'] ?? ''); ?>"
+                                                                data-sector-aktif="<?php echo $sektor['aktif']; ?>">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu sektörü silmek istediğinize emin misiniz?');">
+                                                            <input type="hidden" name="sector_id" value="<?php echo $sektor['id']; ?>">
+                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                                                            <button type="submit" name="delete_sector" class="btn btn-sm btn-danger" <?php echo ($sektor['event_count'] > 0) ? 'disabled title="Bu sektöre bağlı kayıtlar var"' : ''; ?>>
+                                                                <i class="fas fa-trash"></i>
+                                                            </button>
+                                                        </form>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php } catch(PDOException $e) { ?>
+                                        <tr><td colspan="5">Sektörler getirilirken hata oluştu.</td></tr>
                                     <?php } ?>
                                 </tbody>
                             </table>
@@ -3174,7 +3421,7 @@ if (isset($_SESSION['error'])) {
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="eventModalLabel">Etkinlik Ekle/Düzenle</h5>
+                    <h5 class="modal-title" id="eventModalLabel"><?php echo htmlspecialchars($sector_meta['new_title']); ?> Kaydı</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <form method="post" id="eventForm" accept-charset="UTF-8">
@@ -3183,7 +3430,15 @@ if (isset($_SESSION['error'])) {
                         <input type="hidden" name="source_page" value="<?php echo $page; ?>">
                         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                         <div class="row">
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-4 mb-3">
+                                <label for="sektor_id" class="form-label">Sektör</label>
+                                <select class="form-select" id="sektor_id" name="sektor_id" required>
+                                    <?php foreach ($all_sectors as $sid => $sector): ?>
+                                        <option value="<?php echo $sid; ?>" <?php echo ($selected_sector_id === $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-4 mb-3">
                                 <label for="unit_id" class="form-label">Birim</label>
                                 <select class="form-select" id="unit_id" name="unit_id" required>
                                     <option value="">Birim Seçin</option>
@@ -3202,8 +3457,8 @@ if (isset($_SESSION['error'])) {
                                     ?>
                                 </select>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="event_date" class="form-label">Tarih</label>
+                            <div class="col-md-4 mb-3">
+                                <label for="event_date" class="form-label"><?php echo htmlspecialchars($sector_meta['date_label']); ?></label>
                                 <input type="date" class="form-control" id="event_date" name="event_date" required>
                             </div>
                         </div>
@@ -3216,20 +3471,20 @@ if (isset($_SESSION['error'])) {
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label for="event_name" class="form-label">Etkinlik Adı</label>
+                                <label for="event_name" class="form-label"><?php echo htmlspecialchars($sector_meta['name_label']); ?></label>
                                 <input type="text" class="form-control" id="event_name" name="event_name" required>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label for="event_time" class="form-label">Saat</label>
+                                <label for="event_time" class="form-label"><?php echo htmlspecialchars($sector_meta['time_label']); ?></label>
                                 <input type="text" class="form-control" id="event_time" name="event_time" placeholder="Örn: 14:00-16:00" required>
                             </div>
                         </div>
                         <div class="mb-3">
-                            <label for="event_contact" class="form-label">İletişim Bilgisi</label>
+                            <label for="event_contact" class="form-label"><?php echo htmlspecialchars($sector_meta['contact_label']); ?></label>
                             <input type="text" class="form-control" id="event_contact" name="event_contact" placeholder="İsteğe bağlı">
                         </div>
                         <div class="mb-3">
-                            <label for="event_notes" class="form-label">Notlar</label>
+                            <label for="event_notes" class="form-label"><?php echo htmlspecialchars($sector_meta['notes_label']); ?></label>
                             <textarea class="form-control" id="event_notes" name="event_notes" rows="3"></textarea>
                         </div>
                         <div class="row">
@@ -3259,6 +3514,39 @@ if (isset($_SESSION['error'])) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
                         <button type="submit" name="save_event" class="btn btn-primary">Kaydet</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="sectorModal" tabindex="-1" aria-labelledby="sectorModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sectorModalLabel">Sektör Ekle/Düzenle</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="post" id="sectorForm" accept-charset="UTF-8">
+                    <div class="modal-body">
+                        <input type="hidden" name="sector_id" id="sector_id">
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                        <div class="mb-3">
+                            <label for="sector_ad" class="form-label">Sektör Adı</label>
+                            <input type="text" class="form-control" id="sector_ad" name="sector_ad" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="sector_aciklama" class="form-label">Açıklama</label>
+                            <textarea class="form-control" id="sector_aciklama" name="sector_aciklama" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input class="form-check-input" type="checkbox" id="sector_aktif" name="sector_aktif" value="1" checked>
+                            <label class="form-check-label" for="sector_aktif">Aktif</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                        <button type="submit" name="save_sector" class="btn btn-primary">Kaydet</button>
                     </div>
                 </form>
             </div>
@@ -3412,7 +3700,7 @@ if (isset($_SESSION['error'])) {
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="loginModalLabel">Admin Girişi</h5>
+                    <h5 class="modal-title" id="loginModalLabel">Yönetici Girişi</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <form method="post" accept-charset="UTF-8">
@@ -3441,7 +3729,7 @@ if (isset($_SESSION['error'])) {
 
     <footer class="mt-5">
         <div class="container text-center">
-            <p class="mb-0">© <?php echo date('Y'); ?> Çeşme Belediyesi Kültür Müdürlüğü - Tüm hakları saklıdır.</p>
+            <p class="mb-0">© <?php echo date('Y'); ?> Küçük İşletmeler Ajanda & Rezervasyon Paneli - Tüm hakları saklıdır.</p>
             <p class="mb-0" style="font-size: 0.85rem;">Coded by İlhan Akdeniz</p>
         </div>
     </footer>
@@ -3468,6 +3756,7 @@ if (isset($_SESSION['error'])) {
                 form.querySelector('#event_contact').value = button.dataset.eventContact || '';
                 form.querySelector('#event_notes').value = button.dataset.eventNotes || '';
                 form.querySelector('#event_status').value = button.dataset.eventStatus || 'option'; // 'option' varsayılan
+                form.querySelector('#sektor_id').value = button.dataset.sectorId || '<?php echo $selected_sector_id; ?>';
                 form.querySelector('#unit_id').value = button.dataset.unitId || '';
                 form.querySelector('#payment_status').value = button.dataset.eventPayment || '';
                 document.getElementById('unit_id').disabled = false;
@@ -3548,6 +3837,7 @@ if (isset($_SESSION['error'])) {
                 document.getElementById('event_id').value = '';
                 document.getElementById('event_date').value = new Date().toISOString().split('T')[0];
                 document.getElementById('event_status').value = 'option'; // Varsayılan durum
+                document.getElementById('sektor_id').value = '<?php echo $selected_sector_id ?: (!empty($all_sectors) ? array_key_first($all_sectors) : ''); ?>';
                 document.getElementById('unit_id').disabled = false;
                 togglePaymentStatus('option'); // Varsayılan duruma göre ayarla
             }
@@ -3557,6 +3847,7 @@ if (isset($_SESSION['error'])) {
                 document.getElementById('event_id').value = '';
                 document.getElementById('event_date').value = date;
                 document.getElementById('unit_id').value = unitId;
+                document.getElementById('sektor_id').value = '<?php echo $selected_sector_id ?: (!empty($all_sectors) ? array_key_first($all_sectors) : ''); ?>';
                 document.getElementById('unit_id').disabled = false;
                 document.getElementById('event_status').value = 'option'; // Varsayılan durum
                 document.getElementById('existingEventsSection').style.display = 'block';
@@ -3577,6 +3868,21 @@ if (isset($_SESSION['error'])) {
                 document.getElementById('unitForm').reset();
                 document.getElementById('modal_unit_id').value = '';
                 document.getElementById('unit_active').checked = true;
+            }
+
+            document.querySelectorAll('.edit-sector').forEach(button => {
+                button.addEventListener('click', function() {
+                    document.getElementById('sector_id').value = this.dataset.sectorId;
+                    document.getElementById('sector_ad').value = this.dataset.sectorAd;
+                    document.getElementById('sector_aciklama').value = this.dataset.sectorAciklama;
+                    document.getElementById('sector_aktif').checked = this.dataset.sectorAktif === '1';
+                });
+            });
+
+            window.newSector = function() {
+                document.getElementById('sectorForm').reset();
+                document.getElementById('sector_id').value = '';
+                document.getElementById('sector_aktif').checked = true;
             }
 
             document.querySelectorAll('.edit-holiday').forEach(button => {
