@@ -2,9 +2,6 @@
 SET NAMES utf8mb4;
 SET time_zone = '+03:00';
 
-CREATE DATABASE IF NOT EXISTS `etkinlik_takip` CHARACTER SET utf8mb4 COLLATE utf8mb4_turkish_ci;
-USE `etkinlik_takip`;
-
 -- Admin kullanıcıları
 CREATE TABLE IF NOT EXISTS `admin_users` (
   `id` int NOT NULL AUTO_INCREMENT,
