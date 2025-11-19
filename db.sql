@@ -2,9 +2,6 @@
 SET NAMES utf8mb4;
 SET time_zone = '+03:00';
 
-CREATE DATABASE IF NOT EXISTS `etkinlik_takip` CHARACTER SET utf8mb4 COLLATE utf8mb4_turkish_ci;
-USE `etkinlik_takip`;
-
 -- Admin kullanıcıları
 CREATE TABLE IF NOT EXISTS `admin_users` (
   `id` int NOT NULL AUTO_INCREMENT,
@@ -20,6 +17,18 @@ CREATE TABLE IF NOT EXISTS `admin_users` (
 INSERT INTO `admin_users` (`username`,`password`,`full_name`,`email`,`is_active`) VALUES
 ('djmaster','$2y$12$5j7pxLshNc7IXE5DZ9pMK.hjmMKIc1QoB3Y8vCheymQ0eJEN5f3TS','Varsayılan Yönetici',NULL,1)
 ON DUPLICATE KEY UPDATE username=username;
+
+-- Lisans Ayarları
+CREATE TABLE IF NOT EXISTS `license_settings` (
+  `id` int NOT NULL,
+  `license_expire_date` date NOT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+INSERT INTO `license_settings` (`id`, `license_expire_date`)
+VALUES (1, DATE_ADD(CURDATE(), INTERVAL 30 DAY))
+ON DUPLICATE KEY UPDATE license_expire_date = license_expire_date;
 
 -- Sektörler
 CREATE TABLE IF NOT EXISTS `sektorler` (
