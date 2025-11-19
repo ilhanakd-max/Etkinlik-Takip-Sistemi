@@ -2,59 +2,8 @@
 // index.php - Küçük İşletmeler İçin Sektörel Ajanda
 header('Content-Type: text/html; charset=utf-8');
 
-// ----------------------------------------------------
-// 🔥🔥🔥 KRİTİK UYARI: VERİTABANI BAĞLANTI BİLGİLERİNİ GİRİN 🔥🔥🔥
-// --- VERİTABANI AYARLARI ---
-$db_host = 'sql211.infinityfree.com'; // Kendi sunucu ayarlarınızı girin
-$db_name = 'if0_40197167_test';   // Veritabanı adı
-$db_user = 'if0_40197167';           // Kullanıcı adı
-$db_pass = 'Aeg151851';               // Şifre
-
-try {
-    $dsn = "mysql:host=$db_host;dbname=$db_name;charset=utf8mb4";
-    $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
-    // === LICENSE CONTROL AUTO PATCH ===
-$current_page = basename($_SERVER['PHP_SELF']);
-$is_login_page = !isset($_SESSION['admin_logged_in']);
-
-if (!isset($_SESSION['super_admin']) && !$is_login_page) {
-    try {
-        $stmt = $pdo->query("SELECT license_expire_date FROM license_settings WHERE id=1");
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row) {
-            $expire_date = $row['license_expire_date'];
-            $today = date('Y-m-d');
-            if ($today > $expire_date) {
-                echo "<div style='padding:40px; text-align:center; font-family:Arial'>
-                        <h2 style='color:red;'>LİSANS SÜRESİ DOLMUŞTUR</h2>
-                        <p>Bu panel şu anda kullanılamamaktadır.</p>
-                        <p>Yalnızca süper admin giriş yapabilir.</p>
-                        <p><a href='index.php' style='color:blue;'>Girişe dön</a></p>
-                      </div>";
-                exit;
-            }
-        } else {
-            echo "<div style='padding:40px; text-align:center; font-family:Arial'>
-                    <h2 style='color:red;'>LİSANS KAYDI BULUNAMADI</h2>
-                    <p>Sistem lisanslanmadığı için kapatıldı.</p>
-                    <p>Yalnızca süper admin giriş yapabilir.</p>
-                    <p><a href='index.php' style='color:blue;'>Girişe dön</a></p>
-                  </div>";
-            exit;
-        }
-    } catch (Exception $e) {
-        echo "<h3>Lisans kontrol hatası: ".$e->getMessage()."</h3>";
-        exit;
-    }
-}
-// === END LICENSE CONTROL ===
-$pdo = new PDO($dsn, $db_user, $db_pass, $options);
-    $pdo->exec("SET time_zone = '+03:00'");
-} catch(PDOException $e) {
-    // Sayfanın açılmamasının ana sebebi budur.
-    error_log("Veritabanı bağlantı hatası: " . $e->getMessage());
-    die("<h1 style='color: red;'>Sistem Hatası: Veritabanı Bağlantısı Kurulamadı.</h1><p>Lütfen <code>index.php</code> dosyasındaki <b>\$db_host</b>, <b>\$db_name</b>, <b>\$db_user</b> ve <b>\$db_pass</b> bilgilerini kontrol edin.</p>");
-}
+$appConfig = require __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/license.php';
 
 // --- OTURUM VE AYARLAR ---
 ini_set('session.use_strict_mode', '1');
@@ -70,13 +19,37 @@ session_set_cookie_params([
 ]);
 session_start();
 
+// ----------------------------------------------------
+// 🔥🔥🔥 KRİTİK UYARI: VERİTABANI BAĞLANTI BİLGİLERİNİ GİRİN 🔥🔥🔥
+// --- VERİTABANI AYARLARI ---
+$db_host = 'sql211.infinityfree.com'; // Kendi sunucu ayarlarınızı girin
+$db_name = 'if0_40197167_test';   // Veritabanı adı
+$db_user = 'if0_40197167';           // Kullanıcı adı
+$db_pass = 'Aeg151851';               // Şifre
+
+try {
+    $dsn = "mysql:host=$db_host;dbname=$db_name;charset=utf8mb4";
+    $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
+    $pdo = new PDO($dsn, $db_user, $db_pass, $options);
+    $pdo->exec("SET time_zone = '+03:00'");
+} catch(PDOException $e) {
+    // Sayfanın açılmamasının ana sebebi budur.
+    error_log("Veritabanı bağlantı hatası: " . $e->getMessage());
+    die("<h1 style='color: red;'>Sistem Hatası: Veritabanı Bağlantısı Kurulamadı.</h1><p>Lütfen <code>index.php</code> dosyasındaki <b>\$db_host</b>, <b>\$db_name</b>, <b>\$db_user</b> ve <b>\$db_pass</b> bilgilerini kontrol edin.</p>");
+}
+
+// --- LISANS KONTROLÜ ---
+// Sisteme giriş yapılmadan hemen önce lisans durumu denetlenir.
+enforce_license($pdo, $appConfig);
+
 // Yardımcı Fonksiyonlar
-function clean_input($data) { 
+function clean_input($data) {
     $sanitized = trim(strip_tags((string) $data));
     return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
 }
 
 function is_admin() { return isset($_SESSION['admin']) && $_SESSION['admin'] === true; }
+function is_super_admin() { return is_super_admin_session(); }
 function generateCSRFToken() { if (!isset($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); return $_SESSION['csrf_token']; }
 function validateCSRFToken($token) { return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token); }
 function is_valid_date_string($date) { if (!is_string($date) || $date === '') return false; $dt = DateTime::createFromFormat('Y-m-d', $date); return $dt && $dt->format('Y-m-d') === $date; }
@@ -593,7 +566,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     // LİSANS AYARLARINI KAYDET
-    if (isset($_POST['save_license']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+    if (isset($_POST['save_license'])) {
+        if (!is_super_admin() || !validateCSRFToken($_POST['csrf_token'])) {
+            $_SESSION['error'] = "Bu alan yalnızca süper admin tarafından kullanılabilir.";
+            header("Location: ?page=admin&tab=license"); exit;
+        }
         $license_date = clean_input($_POST['license_expire_date']);
         if (!is_valid_date_string($license_date)) {
             $_SESSION['error'] = "Geçersiz lisans tarihi.";
@@ -1021,7 +998,9 @@ if (!$selected_unit && count($units) > 0) $selected_unit = $units[0]['id'];
                     <a href="?page=admin&tab=users" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='users'?'active':''; ?>">Yöneticiler</a>
                     <a href="?page=admin&tab=sectors" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='sectors'?'active':''; ?>">Sektörler</a>
                     <a href="?page=admin&tab=settings" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='settings'?'active':''; ?>">Aktif Sektör Ayarı</a>
-                    <a href="?page=admin&tab=license" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='license'?'active':''; ?>">Lisans Ayarları</a>
+                    <?php if (is_super_admin()): ?>
+                        <a href="?page=admin&tab=license" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='license'?'active':''; ?>">Lisans Yönetimi</a>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="col-md-9">
@@ -1136,6 +1115,36 @@ if (!$selected_unit && count($units) > 0) $selected_unit = $units[0]['id'];
                         </div>
                         <?php endif; ?>
                     
+                    <?php elseif($tab == 'license'): ?>
+                        <?php if (!is_super_admin()): ?>
+                            <div class="alert alert-danger">Bu alan sadece süper admin (ilhan) tarafından kullanılabilir.</div>
+                        <?php else:
+                            $license_error = '';
+                            try {
+                                $license_info = fetch_license_expire_date($pdo);
+                            } catch (PDOException $e) {
+                                $license_info = null;
+                                $license_error = 'Lisans bilgisi okunurken hata oluştu: ' . $e->getMessage();
+                            }
+                        ?>
+                            <h4>Lisans Yönetimi</h4>
+                            <p>Sistemin kullanım süresini buradan uzatabilirsiniz. Lisans süresi dolduğunda yalnızca süper admin giriş yapabilir.</p>
+                            <?php if ($license_error): ?>
+                                <div class="alert alert-warning"><?php echo htmlspecialchars($license_error); ?></div>
+                            <?php endif; ?>
+                            <form method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                <div class="mb-3">
+                                    <label class="form-label">Lisans Bitiş Tarihi</label>
+                                    <input type="date" name="license_expire_date" class="form-control" value="<?php echo htmlspecialchars($license_info['license_expire_date'] ?? date('Y-m-d', strtotime('+30 days'))); ?>" required>
+                                </div>
+                                <button type="submit" name="save_license" class="btn btn-primary">Lisans Tarihini Güncelle</button>
+                            </form>
+                            <?php if (!empty($license_info['updated_at'])): ?>
+                                <p class="text-muted mt-3"><small>Son Güncelleme: <?php echo turkish_date('d M Y H:i', strtotime($license_info['updated_at'])); ?></small></p>
+                            <?php endif; ?>
+                        <?php endif; ?>
+
                     <?php elseif($tab == 'units'): ?>
                         <div class="d-flex justify-content-between mb-3">
                             <h4><?php echo $lang['unit_label']; ?> Listesi</h4>
