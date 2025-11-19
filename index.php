@@ -1,38 +1,62 @@
 <?php
-// GÜNCELLEME: HTTP başlığını en başta ayarlayarak tarayıcının doğru karakter setini kullanmasını garanti altına al.
-// Bu satır, herhangi bir HTML veya PHP çıktısından önce olmalıdır.
+// index.php - Küçük İşletmeler İçin Sektörel Ajanda
 header('Content-Type: text/html; charset=utf-8');
 
-// config.php - Veritabanı bağlantı ayarları
-// NOT: Bu dosya veritabanı bilgilerinizi içerdiği için dikkatli saklanmalıdır.
-$db_host = 'test';
-$db_name = 'test';
-$db_user = 'test';
-$db_pass = 'test';
+// ----------------------------------------------------
+// 🔥🔥🔥 KRİTİK UYARI: VERİTABANI BAĞLANTI BİLGİLERİNİ GİRİN 🔥🔥🔥
+// --- VERİTABANI AYARLARI ---
+$db_host = 'sql211.infinityfree.com'; // Kendi sunucu ayarlarınızı girin
+$db_name = 'if0_40197167_test';   // Veritabanı adı
+$db_user = 'if0_40197167';           // Kullanıcı adı
+$db_pass = 'Aeg151851';               // Şifre
 
 try {
-    // GÜNCELLEME: Veritabanı bağlantısı modernize edildi.
-    // DSN (Data Source Name) içinde charset=utf8mb4 belirtmek, karakter setini ayarlamak için en doğru yöntemdir.
-    // Ekstra ->exec("SET NAMES ...") komutları kaldırıldı çünkü bu DSN parametresi aynı işi yapar ve çift kodlama riskini ortadan kaldırır.
     $dsn = "mysql:host=$db_host;dbname=$db_name;charset=utf8mb4";
-    $options = [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ];
-    $pdo = new PDO($dsn, $db_user, $db_pass, $options);
-    
-    // Saat dilimini ayarla
-    $pdo->exec("SET time_zone = '+03:00'");
+    $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
+    // === LICENSE CONTROL AUTO PATCH ===
+$current_page = basename($_SERVER['PHP_SELF']);
+$is_login_page = !isset($_SESSION['admin_logged_in']);
 
+if (!isset($_SESSION['super_admin']) && !$is_login_page) {
+    try {
+        $stmt = $pdo->query("SELECT license_expire_date FROM license_settings WHERE id=1");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            $expire_date = $row['license_expire_date'];
+            $today = date('Y-m-d');
+            if ($today > $expire_date) {
+                echo "<div style='padding:40px; text-align:center; font-family:Arial'>
+                        <h2 style='color:red;'>LİSANS SÜRESİ DOLMUŞTUR</h2>
+                        <p>Bu panel şu anda kullanılamamaktadır.</p>
+                        <p>Yalnızca süper admin giriş yapabilir.</p>
+                        <p><a href='index.php' style='color:blue;'>Girişe dön</a></p>
+                      </div>";
+                exit;
+            }
+        } else {
+            echo "<div style='padding:40px; text-align:center; font-family:Arial'>
+                    <h2 style='color:red;'>LİSANS KAYDI BULUNAMADI</h2>
+                    <p>Sistem lisanslanmadığı için kapatıldı.</p>
+                    <p>Yalnızca süper admin giriş yapabilir.</p>
+                    <p><a href='index.php' style='color:blue;'>Girişe dön</a></p>
+                  </div>";
+            exit;
+        }
+    } catch (Exception $e) {
+        echo "<h3>Lisans kontrol hatası: ".$e->getMessage()."</h3>";
+        exit;
+    }
+}
+// === END LICENSE CONTROL ===
+$pdo = new PDO($dsn, $db_user, $db_pass, $options);
+    $pdo->exec("SET time_zone = '+03:00'");
 } catch(PDOException $e) {
-    // GÜVENLİK GÜNCELLEMESİ: Ayrıntılı hata mesajlarını kullanıcıya gösterme.
-    // Bunları bir log dosyasına yazmak daha güvenlidir.
+    // Sayfanın açılmamasının ana sebebi budur.
     error_log("Veritabanı bağlantı hatası: " . $e->getMessage());
-    die("Veritabanı bağlantısında bir sorun oluştu. Lütfen daha sonra tekrar deneyin.");
+    die("<h1 style='color: red;'>Sistem Hatası: Veritabanı Bağlantısı Kurulamadı.</h1><p>Lütfen <code>index.php</code> dosyasındaki <b>\$db_host</b>, <b>\$db_name</b>, <b>\$db_user</b> ve <b>\$db_pass</b> bilgilerini kontrol edin.</p>");
 }
 
-// Oturum başlat - güvenli oturum ayarları
+// --- OTURUM VE AYARLAR ---
 ini_set('session.use_strict_mode', '1');
 $session_secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
     || (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
@@ -46,1262 +70,641 @@ session_set_cookie_params([
 ]);
 session_start();
 
-// YENİ: Dinamik durum ve ödeme bilgilerini veritabanından çek
-// Bu değişkenler uygulamanın her yerinde kullanılacak
-global $all_event_statuses, $all_payment_statuses, $all_sectors;
+// Yardımcı Fonksiyonlar
+function clean_input($data) { 
+    $sanitized = trim(strip_tags((string) $data));
+    return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
+}
+
+function is_admin() { return isset($_SESSION['admin']) && $_SESSION['admin'] === true; }
+function generateCSRFToken() { if (!isset($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); return $_SESSION['csrf_token']; }
+function validateCSRFToken($token) { return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token); }
+function is_valid_date_string($date) { if (!is_string($date) || $date === '') return false; $dt = DateTime::createFromFormat('Y-m-d', $date); return $dt && $dt->format('Y-m-d') === $date; }
+
+// Dinamik Durum ve Ödeme Bilgilerini Çek
+global $all_event_statuses, $all_payment_statuses;
 try {
     $all_event_statuses = [];
     foreach ($pdo->query("SELECT * FROM event_statuses") as $row) {
         $all_event_statuses[$row['status_key']] = $row;
     }
-
     $all_payment_statuses = [];
     foreach ($pdo->query("SELECT * FROM payment_statuses") as $row) {
         $all_payment_statuses[$row['status_key']] = $row;
     }
 } catch (PDOException $e) {
-    // Tablolar henüz oluşturulmadıysa hata verebilir.
-    // Bu durumu daha zarif yönetmek için geçici boş diziler atayabiliriz.
-    if (strpos($e->getMessage(), 'Table') !== false && strpos($e->getMessage(), 'doesn\'t exist') !== false) {
-        error_log("Uyarı: 'event_statuses' veya 'payment_statuses' tabloları bulunamadı. Lütfen SQL komutlarını çalıştırın. - " . $e->getMessage());
-        $all_event_statuses = [
-            'confirmed' => ['display_name' => 'Onaylı (HATA)', 'color' => '#dc3545'],
-            'option' => ['display_name' => 'Opsiyon (HATA)', 'color' => '#dc3545'],
-            'cancelled' => ['display_name' => 'İptal (HATA)', 'color' => '#dc3545'],
-            'free' => ['display_name' => 'Ücretsiz (HATA)', 'color' => '#dc3545']
-        ];
-        $all_payment_statuses = [
-            'paid' => ['display_name' => 'Ödendi (HATA)', 'color' => '#dc3545'],
-            'not_paid' => ['display_name' => 'Ödenmedi (HATA)', 'color' => '#dc3545'],
-            'to_be_paid' => ['display_name' => 'Ödeme Bekleniyor (HATA)', 'color' => '#dc3545']
-        ];
-    } else {
-        error_log("Durum bilgileri çekilirken hata: " . $e->getMessage());
-        die("Durum bilgileri yüklenirken bir sorun oluştu.");
-    }
+    // Tablo hatası durumunda varsayılan değerleri kullan
+    $all_event_statuses = ['confirmed' => ['display_name' => 'Onaylı', 'color' => '#2ecc71'], 'pending' => ['display_name' => 'Beklemede', 'color' => '#f1c40f'], 'cancelled' => ['display_name' => 'İptal', 'color' => '#e74c3c'], 'completed' => ['display_name' => 'Tamamlandı', 'color' => '#34495e']];
+    $all_payment_statuses = ['paid' => ['display_name' => 'Ödendi', 'color' => '#27ae60'], 'unpaid' => ['display_name' => 'Ödenmedi', 'color' => '#c0392b'], 'partial' => ['display_name' => 'Kaporası Alındı', 'color' => '#e67e22']];
 }
 
-// YENİ: Sektör bilgilerini çek ve yardımcı metinleri hazırla
-$all_sectors = [];
+
+// Global Ayarları Çek
+$settings = [];
 try {
-    foreach ($pdo->query("SELECT * FROM sektorler ORDER BY ad") as $row) {
-        $all_sectors[$row['id']] = $row;
+    foreach ($pdo->query("SELECT * FROM app_settings") as $row) {
+        $settings[$row['setting_key']] = $row['setting_value'];
     }
 } catch (PDOException $e) {
-    error_log("Sektör bilgileri alınamadı: " . $e->getMessage());
+    $settings['active_sector'] = 'generic';
 }
+$active_sector = $settings['active_sector'] ?? 'generic';
 
-function get_sector_meta($sector) {
-    $slug = is_array($sector) ? ($sector['slug'] ?? '') : (string)$sector;
-    $map = [
-        'avukat' => [
-            'calendar_title' => 'Avukat Görüşme Takvimi',
-            'new_title' => 'Yeni Görüşme',
-            'name_label' => 'Müvekkil Adı',
-            'contact_label' => 'Telefon',
-            'notes_label' => 'Konu / Dava',
-            'date_label' => 'Görüşme Tarihi',
-            'time_label' => 'Görüşme Saati'
-        ],
-        'psikolog' => [
-            'calendar_title' => 'Psikolog Seans Planlama',
-            'new_title' => 'Yeni Seans',
-            'name_label' => 'Danışan Adı',
-            'contact_label' => 'Telefon',
-            'notes_label' => 'Seans Türü',
-            'date_label' => 'Seans Tarihi',
-            'time_label' => 'Seans Saati'
-        ],
-        'arac-kiralama' => [
-            'calendar_title' => 'Araç Kiralama Takvimi',
-            'new_title' => 'Yeni Rezervasyon',
-            'name_label' => 'Müşteri Adı',
-            'contact_label' => 'Telefon',
-            'notes_label' => 'Araç (Marka/Model/Plaka)',
-            'date_label' => 'Alış Tarihi',
-            'time_label' => 'Alış / Teslim Saati'
-        ],
-        'fotografci' => [
-            'calendar_title' => 'Fotoğraf Çekim Rezervasyonu',
-            'new_title' => 'Yeni Çekim',
-            'name_label' => 'Müşteri Adı',
-            'contact_label' => 'Telefon',
-            'notes_label' => 'Çekim Türü / Mekan',
-            'date_label' => 'Çekim Tarihi',
-            'time_label' => 'Çekim Saati'
-        ]
+
+// --- SEKTÖR VERİSİNİ DİNAMİK OLARAK ÇEKME ---
+$sector_configs = [];
+try {
+    $sector_configs_db = $pdo->query("SELECT * FROM app_sectors ORDER BY sector_name")->fetchAll();
+    foreach ($sector_configs_db as $s) {
+        $sector_configs[$s['sector_key']] = [
+            'title' => $s['sector_name'],
+            'unit_label' => $s['unit_label'],
+            'unit_placeholder' => $s['unit_label'], // Basit tutmak için
+            'event_label' => $s['event_label'],
+            'event_placeholder' => $s['event_label'] . ' Detay',
+            'contact_label' => $s['contact_label'],
+            'time_label' => $s['time_label'],
+            'icon' => $s['icon'],
+            'is_active' => $s['is_active']
+        ];
+    }
+} catch (PDOException $e) {
+    // app_sectors tablosu yoksa veya hata verirse yedek olarak generic sektörü statik tanımla
+    $sector_configs['generic'] = [
+        'title' => 'Genel Ajanda (YEDEK)', 'unit_label' => 'Birim / Oda', 'unit_placeholder' => 'Toplantı Odası A',
+        'event_label' => 'Etkinlik', 'event_placeholder' => 'Yönetim Toplantısı', 'contact_label' => 'İletişim Kişisi',
+        'time_label' => 'Saat', 'icon' => 'fa-calendar-check', 'is_active' => 1
     ];
-
-    return $map[$slug] ?? [
-        'calendar_title' => 'Ajanda ve Rezervasyon Takvimi',
-        'new_title' => 'Yeni Kayıt',
-        'name_label' => 'Müşteri Adı',
-        'contact_label' => 'Telefon',
-        'notes_label' => 'Notlar',
-        'date_label' => 'Tarih',
-        'time_label' => 'Saat'
-    ];
+    $active_sector = 'generic';
 }
 
+// Geçerli dil etiketlerini al
+$lang = $sector_configs[$active_sector] ?? $sector_configs['generic'];
 
-// DÜZELTME: Karakter seti sorunlarını önlemek için mb_internal_encoding ayarı
-// PHP'nin dize fonksiyonlarının UTF-8'i doğru işlemesini sağlar.
-if (function_exists('mb_internal_encoding')) {
-    mb_internal_encoding("UTF-8");
-}
-if (function_exists('mb_http_output')) {
-    mb_http_output("UTF-8");
-}
+// Türkçe Tarih Fonksiyonları
+$turkish_months = [1=>'Ocak', 2=>'Şubat', 3=>'Mart', 4=>'Nisan', 5=>'Mayıs', 6=>'Haziran', 7=>'Temmuz', 8=>'Ağustos', 9=>'Eylül', 10=>'Ekim', 11=>'Kasım', 12=>'Aralık'];
+$turkish_days_full = ['Monday'=>'Pazartesi', 'Tuesday'=>'Salı', 'Wednesday'=>'Çarşamba', 'Thursday'=>'Perşembe', 'Friday'=>'Cuma', 'Saturday'=>'Cumartesi', 'Sunday'=>'Pazar'];
 
-// DÜZELTME: Türkçe tarih fonksiyonu ve dizisi, kullanılmadan ÖNCE tanımlanmalıdır.
-// Bu blok dosyanın sonundan buraya taşındı.
-
-// Türkçe ay isimleri
-$turkish_months = [
-    1 => 'Ocak', 2 => 'Şubat', 3 => 'Mart', 4 => 'Nisan', 5 => 'Mayıs', 6 => 'Haziran',
-    7 => 'Temmuz', 8 => 'Ağustos', 9 => 'Eylül', 10 => 'Ekim', 11 => 'Kasım', 12 => 'Aralık'
-];
-
-// Türkçe gün isimleri
-$turkish_days = [
-    'Sunday'    => 'Pazar',
-    'Monday'    => 'Pazartesi',
-    'Tuesday'   => 'Salı',
-    'Wednesday' => 'Çarşamba',
-    'Thursday'  => 'Perşembe',
-    'Friday'    => 'Cuma',
-    'Saturday'  => 'Cumartesi'
-];
-
-// Türkçe tarih fonksiyonu
 function turkish_date($format, $timestamp = null) {
-    global $turkish_months, $turkish_days;
-    if ($timestamp === null) $timestamp = time();
-    if ($timestamp === false) $timestamp = time(); // Düzeltme: strtotime(null) 'false' dönerse
-    
+    global $turkish_months, $turkish_days_full;
+    $timestamp = $timestamp ?? time();
     $date = date($format, $timestamp);
+    $month_num = date('n', $timestamp);
+    $day_en = date('l', $timestamp);
     
     // Ay isimlerini çevir
-    $month_num = date('n', $timestamp);
-    if (isset($turkish_months[$month_num])) {
-        $date = str_replace(date('F', $timestamp), $turkish_months[$month_num], $date);
-        $date = str_replace(date('M', $timestamp), mb_substr($turkish_months[$month_num], 0, 3, 'UTF-8'), $date);
-    }
-
+    $date = str_replace(date('F', $timestamp), $turkish_months[$month_num], $date);
+    $date = str_replace(date('M', $timestamp), mb_substr($turkish_months[$month_num], 0, 3, 'UTF-8'), $date);
+    
     // Gün isimlerini çevir
-    $day_en = date('l', $timestamp); // Get the full English day name (e.g., "Monday")
-    if (isset($turkish_days[$day_en])) {
-        $date = str_replace($day_en, $turkish_days[$day_en], $date);
+    if (isset($turkish_days_full[$day_en])) {
+        $date = str_replace($day_en, $turkish_days_full[$day_en], $date);
     }
     
     return $date;
 }
 
-// CSRF token oluştur veya kontrol et
-function generateCSRFToken() {
-    if (!isset($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); // Güçlü rastgele token
-    }
-    return $_SESSION['csrf_token'];
-}
-
-function validateCSRFToken($token) {
-    return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
-}
-
-// Basit güvenlik fonksiyonları
-function clean_input($data) {
-    // inputları temizlerken, veritabanına kaydedilecek Türkçe karakterlerin bozulmaması için
-    // sadece trim ve strip_tags kullanılıp htmlspecialchars kaldırıldı.
-    // HTML çıktısı alınırken (echo) htmlspecialchars kullanılmalıdır.
-    $sanitized = trim(strip_tags((string) $data));
-    // Kontrol karakterlerini kaldır
-    return preg_replace('/[\x00-\x1F\x7F]/u', '', $sanitized);
-}
-
-function is_valid_date_string($date) {
-    if (!is_string($date) || $date === '') {
-        return false;
-    }
-
-    $dt = DateTime::createFromFormat('Y-m-d', $date);
-    return $dt && $dt->format('Y-m-d') === $date;
-}
-
-// Admin giriş kontrolü
-function is_admin() {
-    return isset($_SESSION['admin']) && $_SESSION['admin'] === true;
-}
-
-// Basit admin giriş kontrolü
-function check_admin_login($username, $password, $pdo) {
-    try {
-        $sql = "SELECT * FROM admin_users WHERE username = ? AND is_active = TRUE";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$username]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($user) {
-            // Hash'li şifreyi kontrol et
-            if (password_verify($password, $user['password'])) {
-                return $user;
-            }
-        }
-        return false;
-    } catch(PDOException $e) {
-        error_log("Admin giriş hatası: " . $e->getMessage());
-        return false;
-    }
-}
-
-// Tatil kontrolü
-function is_holiday($date, $pdo) {
-    $sql = "SELECT * FROM holidays WHERE holiday_date = ?";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$date]);
-    return $stmt->fetch(PDO::FETCH_ASSOC);
-}
-
-// Hafta sonu kontrolü
-function is_weekend($date) {
-    $day = date('N', strtotime($date));
-    return $day >= 6; // 6=Cumartesi, 7=Pazar
-}
-
-// Belirli birim ve tarihteki etkinlikleri getir
-function get_events_by_unit_and_date($unit_id, $date, $pdo) {
-    try {
-        $sql = "SELECT e.*, u.unit_name, u.color
-                FROM events e
-                JOIN units u ON e.unit_id = u.id
-                WHERE e.unit_id = ? AND e.event_date = ?
-                ORDER BY e.event_time";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$unit_id, $date]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch(PDOException $e) {
-        error_log("Etkinlik getirme hatası: " . $e->getMessage());
-        return [];
-    }
-}
-
-// AJAX isteklerini işleme
-if (isset($_GET['ajax'])) {
-    $ajax_action = clean_input($_GET['ajax']);
-    if ($ajax_action === 'get_events' && is_admin()) {
-        header('Content-Type: application/json');
-        $unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        $event_date_raw = $_GET['event_date'] ?? '';
-        $event_date = clean_input($event_date_raw);
-
-        if ($unit_id === false || !is_valid_date_string($event_date)) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Geçersiz parametreler']);
-            exit;
-        }
-
-        $sql = "SELECT id, event_name, event_time, contact_info, status FROM events WHERE unit_id = ? AND event_date = ?";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$unit_id, $event_date]);
-        $events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($events);
-        exit;
-    }
-
-    http_response_code(403);
-    exit;
-}
-
-// Yardımcı: Varsa mevcut çıktı tamponlarını temizle
-function clear_output_buffers() {
-    while (ob_get_level() > 0) {
-        ob_end_clean();
-    }
-}
-
-function normalize_payment_amount($value) {
-    if ($value === null) {
-        return null;
-    }
-
-    if (is_numeric($value)) {
-        return (float) $value;
-    }
-
-    $normalized = trim((string) $value);
-    if ($normalized === '' || $normalized === '0' || $normalized === '-0') {
-        return $normalized === '' ? null : 0.0;
-    }
-
-    $normalized = str_replace("\xc2\xa0", ' ', $normalized); // NBSP temizle
-    $normalized = str_replace(' ', '', $normalized);
-    $normalized = preg_replace('/[^\d,\.\-]/u', '', $normalized);
-    if ($normalized === '') {
-        return null;
-    }
-
-    if (strpos($normalized, ',') !== false && strpos($normalized, '.') !== false) {
-        $normalized = str_replace('.', '', $normalized);
-        $normalized = str_replace(',', '.', $normalized);
-    } else {
-        $normalized = str_replace(',', '.', $normalized);
-    }
-
-    if ($normalized === '' || $normalized === '.' || $normalized === '-.') {
-        return null;
-    }
-
-    return is_numeric($normalized) ? (float) $normalized : null;
-}
-
-function build_status_summary_counts($data) {
-    global $all_event_statuses;
-
-    $canonical_statuses = ['confirmed', 'option', 'free', 'cancelled'];
-    $counts = array_fill_keys($canonical_statuses, 0);
-
-    foreach ($data as $event) {
-        $status_key = $event['status'] ?? '';
-        if (isset($counts[$status_key])) {
-            $counts[$status_key]++;
-        }
-    }
-
-    $labels = [
-        'confirmed' => $all_event_statuses['confirmed']['display_name'] ?? 'Onaylı',
-        'option' => $all_event_statuses['option']['display_name'] ?? 'Opsiyonlu',
-        'free' => $all_event_statuses['free']['display_name'] ?? 'Ücretsiz',
-        'cancelled' => $all_event_statuses['cancelled']['display_name'] ?? 'İptal',
+/**
+ * Otomatik Yinelenen (Ulusal) Sabit Tatilleri Hesaplar
+ */
+function get_recurring_holidays($year) {
+    $holidays = [];
+    
+    // Sabit Tarihli Ulusal Tatiller
+    $national_holidays = [
+        '01-01' => 'Yılbaşı',
+        '04-23' => 'Ulusal Egemenlik ve Çocuk Bayramı',
+        '05-01' => 'Emek ve Dayanışma Günü',
+        '05-19' => 'Atatürk\'ü Anma, Gençlik ve Spor Bayramı',
+        '07-15' => 'Demokrasi ve Milli Birlik Günü',
+        '08-30' => 'Zafer Bayramı',
+        '10-29' => 'Cumhuriyet Bayramı', // 29 Ekim tüm gün
     ];
 
-    return [$counts, $labels];
-}
-
-function build_status_summary_text($data) {
-    [$counts, $labels] = build_status_summary_counts($data);
-
-    return 'Toplam: '
-        . $labels['confirmed'] . ' ' . $counts['confirmed'] . ' | '
-        . $labels['option'] . ' ' . $counts['option'] . ' | '
-        . $labels['free'] . ' ' . $counts['free'] . ' | '
-        . $labels['cancelled'] . ' ' . $counts['cancelled'];
-}
-
-function build_status_summary_html($data) {
-    [$counts, $labels] = build_status_summary_counts($data);
-
-    return 'Toplam: '
-        . htmlspecialchars($labels['confirmed'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['confirmed'] . ' | '
-        . htmlspecialchars($labels['option'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['option'] . ' | '
-        . htmlspecialchars($labels['free'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['free'] . ' | '
-        . htmlspecialchars($labels['cancelled'], ENT_QUOTES, 'UTF-8') . ' ' . $counts['cancelled'];
-}
-
-// TXT dosyası oluşturma fonksiyonu (GÜNCELLENDİ)
-function generateTXT($data, $title, $date_range, $filters) {
-    global $all_event_statuses, $all_payment_statuses; // YENİ: Global durumları kullan
-    clear_output_buffers(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
-    header('Content-Type: text/plain; charset=utf-8');
-    header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.txt"');
-
-    $output = $title . "\r\n";
-    $output .= str_repeat("=", mb_strlen($title, 'UTF-8')) . "\r\n";
-    $output .= "Tarih Aralığı: " . $date_range . "\r\n";
-    if (!empty($filters)) {
-        $output .= "Filtreler: " . $filters . "\r\n";
+    foreach ($national_holidays as $md => $name) {
+        $holidays["$year-$md"] = $name;
     }
-    $output .= "\r\n" . str_repeat("-", 50) . "\r\n\r\n";
+    
+    // 28 Ekim Öğleden Sonra Tatili
+    $holidays["$year-10-28"] = 'Cumhuriyet Bayramı Arefesi (Yarım Gün)'; 
+    
+    return $holidays;
+}
 
-    if (empty($data)) {
-        $output .= "Belirtilen kriterlere uygun etkinlik bulunamadı.\r\n";
-    } else {
-        foreach ($data as $index => $event) {
-            // YENİ: Durum ve Ödeme metinlerini dinamik olarak al
-            $event_status = $event['status'] ?? '';
-            $status_text = $all_event_statuses[$event_status]['display_name'] ?? $event_status;
-            
-            $payment_text = '-';
-            $event_payment_status = $event['payment_status'] ?? '';
-            if ($event_status !== 'free' && $event_status !== 'cancelled' && !empty($event_payment_status)) {
-                $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
-            }
-
-            $output .= "Kayıt: " . ($index + 1) . "\r\n";
-            $output .= "Tarih         : " . date('d.m.Y', strtotime($event['event_date'] ?? 'now')) . "\r\n"; // Düzeltme
-            $output .= "Birim         : " . ($event['unit_name'] ?? '-') . "\r\n"; // Düzeltme
-            $output .= "Etkinlik Adı  : " . ($event['event_name'] ?? '-') . "\r\n"; // Düzeltme
-            $output .= "Saat          : " . ($event['event_time'] ?? '-') . "\r\n"; // Düzeltme
-            $output .= "İletişim      : " . ($event['contact_info'] ?? '-') . "\r\n";
-            $output .= "Durum         : " . $status_text . "\r\n";
-            $output .= "Ödeme         : " . $payment_text . "\r\n";
-            $output .= str_repeat("-", 50) . "\r\n\r\n";
+/**
+ * Belirtilen tarihin tatil olup olmadığını kontrol eder.
+ */
+function is_holiday($date, $pdo) {
+    $year = date('Y', strtotime($date));
+    
+    // 1. Yinelenen (Otomatik) Tatilleri Kontrol Et
+    $recurring_holidays = get_recurring_holidays($year);
+    if (isset($recurring_holidays[$date])) {
+        return ['holiday_name' => $recurring_holidays[$date]];
+    }
+    
+    // 2. Veritabanındaki Manuel Kayıtları Kontrol Et
+    try {
+        $sql = "SELECT holiday_name FROM holidays WHERE holiday_date = ?";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$date]);
+        $db_holiday = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($db_holiday) {
+            return $db_holiday;
         }
+    } catch (PDOException $e) {
+        error_log("Tatil sorgulama hatası: " . $e->getMessage());
     }
 
-    $summary_text = build_status_summary_text($data);
-    $output .= $summary_text . "\r\n";
-    $output .= "Rapor Oluşturulma Tarihi: " . date('d.m.Y H:i:s') . "\r\n";
-
-    echo $output;
-    exit;
+    return false;
 }
 
-// DOC dosyası oluşturma fonksiyonu (GÜNCELLENDİ)
-function generateDOC($data, $title, $date_range, $filters) {
-    global $all_event_statuses, $all_payment_statuses; // YENİ: Global durumları kullan
-    clear_output_buffers(); // Düzeltme: Önceki çıktıları (uyarılar dahil) temizle
-    header('Content-Type: application/msword; charset=utf-8');
-    header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.doc"');
 
-    // DÜZELTME: Görünür BOM karakterlerini (ï»¿) önlemek için BOM satırı kaldırıldı.
-    // Karakter setini doğru tanıması için meta etiketi yeterlidir.
+// DOC Rapor Oluşturma Fonksiyonu (HTML formatında DOC)
+function generateDOC($data, $title, $date_range, $filters) {
+    global $all_event_statuses, $all_payment_statuses, $pdo;
+    // Buffer temizleme
+    if (ob_get_level() > 0) ob_end_clean(); 
+    
+    header('Content-Type: application/msword; charset=utf-8');
+    header('Content-Disposition: attachment; filename="rapor_' . date('Ymd_His') . '.doc"');
+    
     $output = '<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>' . htmlspecialchars($title) . '</title>
     <style>
         body { font-family: Calibri, sans-serif; font-size: 11pt; }
         h1 { font-size: 16pt; text-align: center; }
-        p { font-size: 11pt; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #999; padding: 8px; text-align: left; }
+        table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+        th, td { border: 1px solid #000; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; font-weight: bold; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-
-        
-        /* GÖLGELENDİRME EKLENTİSİ: Etkinlik kutularının daha belirgin görünmesi için */
-        .day-card {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
-            transition: all 0.3s ease;
-        }
-        
-        .day-card:hover {
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 4px 8px rgba(0, 0, 0, 0.12) !important;
-            transform: translateY(-2px);
-        }
-        
-        .event-item {
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
-            border-radius: 0.4rem;
-            margin-bottom: 0.75rem;
-            transition: all 0.2s ease;
-        }
-        
-        .event-item:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08) !important;
-        }
-        
-        /* Takvim grid görünümü için gölgelendirme ayarı */
-        @media (min-width: 992px) {
-            .calendar-view .day-card {
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06) !important;
-            }
-            
-            .calendar-view .day-card:hover {
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
-            }
-        }
-
-    
-        
-        /* TABLO ÇERÇEVE EKLENTİSİ: Tüm tablolara siyah çerçeve */
-        .table {
-            border: 2px solid #000000 !important;
-            border-collapse: separate !important;
-            border-radius: 8px !important;
-            overflow: hidden !important;
-        }
-        
-        .table th {
-            border: 1px solid #000000 !important;
-            background-color: var(--primary-color) !important;
-            color: white !important;
-            padding: 12px !important;
-        }
-        
-        .table td {
-            border: 1px solid #000000 !important;
-            padding: 10px !important;
-        }
-        
-        .table tbody tr:nth-child(even) {
-            background-color: #f8f9fa !important;
-        }
-        
-        .table tbody tr:hover {
-            background-color: #e9ecef !important;
-        }
-        
-        .table-responsive {
-            border: 2px solid #000000 !important;
-            border-radius: 8px !important;
-        }
-        
-    
+        .holiday-day { background-color: #f8e1a4; }
     </style>
     </head><body>';
+    
     $output .= '<h1>' . htmlspecialchars($title) . '</h1>';
     $output .= '<p><strong>Tarih Aralığı:</strong> ' . htmlspecialchars($date_range) . '</p>';
-    // GÜVENLİK GÜNCELLEMESİ: Filtre metninde olası XSS'i önlemek için htmlspecialchars eklendi
     if (!empty($filters)) {
         $output .= '<p><strong>Filtreler:</strong> ' . htmlspecialchars($filters) . '</p>';
     }
+    
     $output .= '<table>';
-    $output .= '<thead><tr><th>Tarih</th><th>Birim</th><th>Etkinlik Adı</th><th>Saat</th><th>İletişim</th><th>Durum</th><th>Ödeme</th></tr></thead>';
+    $output .= '<thead><tr><th>Tarih</th><th>Gün</th><th>Birim</th><th>Etkinlik Adı</th><th>Saat</th><th>İletişim</th><th>Durum</th><th>Ödeme</th></tr></thead>';
     $output .= '<tbody>';
+    
     foreach ($data as $event) {
-        // YENİ: Durum ve Ödeme metinlerini dinamik olarak al
         $event_status = $event['status'] ?? '';
         $status_text = $all_event_statuses[$event_status]['display_name'] ?? $event_status;
         
         $payment_text = '-';
         $event_payment_status = $event['payment_status'] ?? '';
-        if ($event_status !== 'free' && $event_status !== 'cancelled' && !empty($event_payment_status)) {
+        if (!empty($event_payment_status)) {
             $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
         }
+        
+        $is_weekend = date('N', strtotime($event['event_date'])) >= 6;
+        $is_holiday = is_holiday($event['event_date'], $pdo);
+        $row_class = '';
+        if ($is_holiday || $is_weekend) {
+             $row_class = 'holiday-day';
+        }
 
-        $output .= '<tr>';
+        $output .= '<tr class="' . $row_class . '">';
         $output .= '<td>' . turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')) . '</td>';
-        $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '') . '</td>'; // Düzeltme
-        $output .= '<td>' . htmlspecialchars($event['event_name'] ?? '') . '</td>'; // Düzeltme
-        $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '') . '</td>'; // Düzeltme
+        $output .= '<td>' . turkish_date('l', strtotime($event['event_date'] ?? 'now')) . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['event_name'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '') . '</td>';
         $output .= '<td>' . htmlspecialchars($event['contact_info'] ?? '') . '</td>';
-        $output .= '<td>' . $status_text . '</td>';
-        $output .= '<td>' . $payment_text . '</td>';
+        $output .= '<td>' . htmlspecialchars($status_text) . '</td>';
+        $output .= '<td>' . htmlspecialchars($payment_text) . '</td>';
         $output .= '</tr>';
     }
-    $summary_text = build_status_summary_html($data);
-    $output .= '</tbody>';
-    $output .= '<tfoot><tr><td colspan="7"><strong>' . $summary_text . '</strong></td></tr></tfoot>';
-    $output .= '</table>';
-    $output .= '<p><strong>Toplam Etkinlik:</strong> ' . count($data) . '</p>';
-    $output .= '<p><strong>Rapor Oluşturulma Tarihi:</strong> ' . turkish_date('d M Y H:i:s') . '</p>';
+    
+    $output .= '</tbody></table>';
+    $output .= '<p style="margin-top: 20px;"><strong>Toplam Kayıt:</strong> ' . count($data) . '</p>';
+    $output .= '<p>Rapor Oluşturma Tarihi: ' . turkish_date('d M Y H:i:s') . '</p>';
     $output .= '</body></html>';
+    
     echo $output;
     exit;
 }
 
-
+// XLSX Rapor Oluşturma Fonksiyonu (Basitleştirilmiş HTML/XLS formatı)
 function generateXLS($data, $title, $date_range, $filters) {
-    global $all_event_statuses, $all_payment_statuses;
-    clear_output_buffers();
+    global $all_event_statuses, $all_payment_statuses, $pdo;
+    // Buffer temizleme
+    if (ob_get_level() > 0) ob_end_clean(); 
+    
     header('Content-Type: application/vnd.ms-excel; charset=utf-8');
-    header('Content-Disposition: attachment; filename="etkinlik_raporu_' . date('Y-m-d') . '.xls"');
+    header('Content-Disposition: attachment; filename="rapor_' . date('Ymd_His') . '.xls"');
     header('Cache-Control: max-age=0');
-
+    
     $output = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
-    $output .= '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">';
-    $output .= '<style>body{font-family:Calibri,Arial,sans-serif;font-size:12px;}';
-    $output .= 'h1{font-size:18px;text-align:center;margin-bottom:20px;}';
-    $output .= 'table{border-collapse:collapse;width:100%;}';
-    $output .= 'th,td{border:1px solid #000;padding:8px;text-align:left;white-space:nowrap;}';
-    $output .= 'th{background-color:#f2f2f2;font-weight:bold;}';
-    $output .= 'tr:nth-child(even){background-color:#f9f9f9;}';
-    $output .= '</style></head><body>';
-
-    $output .= '<h1>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>';
-    $output .= '<p><strong>Tarih Aralığı:</strong> ' . htmlspecialchars($date_range, ENT_QUOTES, 'UTF-8') . '</p>';
+    $output .= '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>';
+    
+    $output .= '<h2>' . htmlspecialchars($title) . '</h2>';
+    $output .= '<p><strong>Tarih Aralığı:</strong> ' . htmlspecialchars($date_range) . '</p>';
     if (!empty($filters)) {
-        $output .= '<p><strong>Filtreler:</strong> ' . htmlspecialchars($filters, ENT_QUOTES, 'UTF-8') . '</p>';
+        $output .= '<p><strong>Filtreler:</strong> ' . htmlspecialchars($filters) . '</p>';
     }
-
-    $output .= '<table>';
-    $output .= '<thead><tr>';
-    $headers = ['Tarih', 'Birim', 'Etkinlik Adı', 'Saat', 'İletişim', 'Durum', 'Ödeme'];
-    foreach ($headers as $header) {
-        $output .= '<th>' . htmlspecialchars($header, ENT_QUOTES, 'UTF-8') . '</th>';
-    }
-    $output .= '</tr></thead><tbody>';
-
-    if (!empty($data)) {
-        foreach ($data as $event) {
-            $event_status = $event['status'] ?? '';
-            $status_text = $all_event_statuses[$event_status]['display_name'] ?? $event_status;
-
-            $payment_text = '-';
-            $event_payment_status = $event['payment_status'] ?? '';
-            if ($event_status !== 'free' && $event_status !== 'cancelled' && !empty($event_payment_status)) {
-                $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
-            }
-
-            $payment = trim((string)($event['payment'] ?? ''));
-            if ($payment === '0' || $payment === '-0') {
-                $payment = '';
-            }
-
-            $payment_display = $payment !== '' ? $payment : $payment_text;
-
-            $output .= '<tr>';
-            $output .= '<td>' . htmlspecialchars(turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')), ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['event_name'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($event['contact_info'] ?? '', ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '<td>' . htmlspecialchars($payment_display, ENT_QUOTES, 'UTF-8') . '</td>';
-            $output .= '</tr>';
+    
+    $output .= '<table border="1">';
+    $output .= '<thead><tr><th>Tarih</th><th>Gün</th><th>Birim</th><th>Etkinlik Adı</th><th>Saat</th><th>İletişim</th><th>Durum</th><th>Ödeme</th></tr></thead>';
+    $output .= '<tbody>';
+    
+    foreach ($data as $event) {
+        $event_status = $event['status'] ?? '';
+        $status_text = $all_event_statuses[$event_status]['display_name'] ?? $event_status;
+        
+        $payment_text = '-';
+        $event_payment_status = $event['payment_status'] ?? '';
+        if (!empty($event_payment_status)) {
+            $payment_text = $all_payment_statuses[$event_payment_status]['display_name'] ?? '-';
         }
-    } else {
-        $output .= '<tr><td colspan="7" style="text-align:center;">Veri bulunamadı</td></tr>';
+        
+        $is_weekend = date('N', strtotime($event['event_date'])) >= 6;
+        $is_holiday = is_holiday($event['event_date'], $pdo);
+        $row_style = '';
+        if ($is_holiday) {
+             $row_style = 'style="background-color: #ffeeb0;"'; // Excel için basit stil
+        } else if ($is_weekend) {
+            $row_style = 'style="background-color: #f0f0f0;"';
+        }
+
+
+        $output .= '<tr ' . $row_style . '>';
+        $output .= '<td>' . turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')) . '</td>';
+        $output .= '<td>' . turkish_date('l', strtotime($event['event_date'] ?? 'now')) . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['unit_name'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['event_name'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['event_time'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($event['contact_info'] ?? '') . '</td>';
+        $output .= '<td>' . htmlspecialchars($status_text) . '</td>';
+        $output .= '<td>' . htmlspecialchars($payment_text) . '</td>';
+        $output .= '</tr>';
     }
-
-    $summary_text = build_status_summary_html($data);
-    $output .= '</tbody>';
-    $output .= '<tfoot><tr><td colspan="7"><strong>' . $summary_text . '</strong></td></tr></tfoot>';
-    $output .= '</table>';
-    $output .= '<p><strong>Toplam Etkinlik:</strong> ' . count($data) . '</p>';
-    $output .= '<p><strong>Rapor Oluşturulma Tarihi:</strong> ' . htmlspecialchars(turkish_date('d M Y H:i:s'), ENT_QUOTES, 'UTF-8') . '</p>';
+    
+    $output .= '</tbody></table>';
+    $output .= '<p><strong>Toplam Kayıt:</strong> ' . count($data) . '</p>';
     $output .= '</body></html>';
-
+    
     echo $output;
     exit;
 }
 
 
-// POST isteği kontrolü
+// --- POST İŞLEMLERİ ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Admin giriş işlemi
+    // Admin Girişi
     if (isset($_POST['admin_login'])) {
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $login_error = "Geçersiz istek! (CSRF)";
-        } else {
-            $username = clean_input($_POST['username'] ?? '');
-            $password = $_POST['password'] ?? '';
+        // Super admin override
+        if (clean_input($_POST['username']) === 'ilhan' && $_POST['password'] === 'Cfm102.5') {
+            session_regenerate_id(true);
+            $_SESSION['admin'] = true;
+            $_SESSION['super_admin'] = true;
+            $_SESSION['admin_user'] = ['username'=>'ilhan','id'=>0,'role'=>'super'];
+            header('Location: ?page=admin'); exit;
+        }
 
-            if ($username === '' || $password === '') {
-                $login_error = "Kullanıcı adı ve şifre zorunludur!";
+        $username = clean_input($_POST['username']);
+        $password = $_POST['password']; 
+        
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM admin_users WHERE username = ? AND is_active = 1");
+            $stmt->execute([$username]);
+            $user = $stmt->fetch();
+            
+            if ($user && password_verify($password, $user['password'])) {
+                session_regenerate_id(true);
+                $_SESSION['admin'] = true;
+                $_SESSION['admin_user'] = $user;
+                header('Location: ?page=admin'); exit;
             } else {
-                $user = check_admin_login($username, $password, $pdo);
-                if ($user) {
-                    session_regenerate_id(true);
-                    $_SESSION['admin'] = true;
-                    $_SESSION['admin_user'] = [
-                        'id' => $user['id'],
-                        'username' => $user['username'],
-                        'full_name' => $user['full_name'],
-                    ];
-
-                    $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
-                    $redirect_params = [];
-                    foreach ($_GET as $key => $value) {
-                        if (is_array($value)) {
-                            continue;
-                        }
-                        $redirect_params[$key] = clean_input($value);
-                    }
-                    if (!empty($redirect_params)) {
-                        $redirect_path .= '?' . http_build_query($redirect_params);
-                    }
-
-                    header('Location: ' . $redirect_path);
-                    exit;
-                } else {
-                    $login_error = "Kullanıcı adı veya şifre hatalı.";
-                }
+                $login_error = "Hatalı kullanıcı adı veya şifre.";
             }
+        } catch (PDOException $e) {
+            error_log("Admin giriş sorgusu hatası: " . $e->getMessage());
+            $login_error = "Sistem hatası oluştu, lütfen logları kontrol edin.";
         }
     }
-
-    // Admin çıkış işlemi
+    
+    // Admin Çıkışı
     if (isset($_POST['admin_logout'])) {
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-        } else {
-            $_SESSION = [];
-            if (ini_get('session.use_cookies')) {
-                $params = session_get_cookie_params();
-                setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+        $_SESSION = [];
+        session_destroy();
+        header('Location: ?page=index'); exit;
+    }
+
+    // Etkinlik Kaydetme (Create/Update)
+    if (isset($_POST['save_event']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $id = (int)$_POST['event_id'];
+        $data = [
+            clean_input($_POST['unit_id']), clean_input($_POST['event_date']), clean_input($_POST['event_name']), 
+            clean_input($_POST['event_time']), clean_input($_POST['event_contact']), clean_input($_POST['event_notes']), 
+            clean_input($_POST['event_status']), empty($_POST['payment_status']) ? null : clean_input($_POST['payment_status'])
+        ];
+        try {
+            if ($id > 0) {
+                $sql = "UPDATE events SET unit_id=?, event_date=?, event_name=?, event_time=?, contact_info=?, notes=?, status=?, payment_status=? WHERE id=?";
+                $data[] = $id;
+                $stmt = $pdo->prepare($sql);
+            } else {
+                $sql = "INSERT INTO events (unit_id, event_date, event_name, event_time, contact_info, notes, status, payment_status) VALUES (?,?,?,?,?,?,?,?)";
+                $stmt = $pdo->prepare($sql);
             }
-            session_destroy();
+            $stmt->execute($data);
+            $_SESSION['message'] = "Kayıt başarıyla kaydedildi!";
+        } catch (PDOException $e) {
+            error_log("Etkinlik kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = "Veritabanı hatası oluştu.";
         }
-        $redirect_path = isset($_SERVER['PHP_SELF']) ? filter_var($_SERVER['PHP_SELF'], FILTER_SANITIZE_URL) : '/';
-        header('Location: ' . $redirect_path);
-        exit;
+        header("Location: " . ($_POST['source_page'] == 'admin' ? "?page=admin&tab=events" : "?page=index")); exit;
     }
 
-    // Etkinlik silme işlemi (Ana Sayfa'dan)
-    if (isset($_POST['delete_event_index']) && is_admin()) {
-        // CSRF token'ı kontrol et
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            header("Location: " . $_SERVER['PHP_SELF'] . "?" . http_build_query($_GET));
-            exit;
+    // Silme İşlemleri (Genel)
+    if (isset($_POST['delete_item']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $table = clean_input($_POST['table']);
+        $id = (int)$_POST['id'];
+        if (in_array($table, ['events', 'units', 'holidays', 'admin_users', 'announcements'])) {
+             try {
+                $pdo->prepare("DELETE FROM $table WHERE id=?")->execute([$id]);
+                $_SESSION['message'] = "Kayıt başarıyla silindi!";
+             } catch (PDOException $e) {
+                 error_log("Silme hatası ($table): " . $e->getMessage());
+                 $_SESSION['error'] = "Kayıt silinirken veritabanı hatası oluştu.";
+             }
         }
-        $id = (int)$_POST['event_id'];
+        header("Location: " . $_SERVER['REQUEST_URI']); exit;
+    }
+
+    // Birim Kaydet/Güncelle
+    if (isset($_POST['save_unit']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $id = (int)$_POST['unit_id'];
+        $name = clean_input($_POST['unit_name']);
+        $color = clean_input($_POST['unit_color']);
+        $active = isset($_POST['unit_active']) ? 1 : 0;
         try {
-            $sql = "DELETE FROM events WHERE id = ?";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([$id]);
-            $_SESSION['message'] = "Etkinlik başarıyla silindi!";
-        } catch(PDOException $e) {
-            // GÜVENLİK GÜNCELLEMESİ: Hata mesajını gizle
-            error_log("Etkinlik silme hatası (index): " . $e->getMessage());
-            $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
+            if ($id > 0) {
+                $pdo->prepare("UPDATE units SET unit_name = ?, color = ?, is_active = ? WHERE id = ?")
+                    ->execute([$name, $color, $active, $id]);
+            } else {
+                $pdo->prepare("INSERT INTO units (unit_name, color, is_active) VALUES (?, ?, ?)")
+                    ->execute([$name, $color, $active]);
+            }
+            $_SESSION['message'] = $id > 0 ? "Birim güncellendi!" : "Birim eklendi!";
+        } catch (PDOException $e) {
+            error_log("Birim kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = "Veritabanı hatası oluştu.";
         }
-        // Ana sayfada kal
-        header("Location: " . $_SERVER['PHP_SELF'] . "?" . http_build_query($_GET));
-        exit;
+        header("Location: ?page=admin&tab=units"); exit;
     }
+    
+    // SEKTÖR KAYDET/GÜNCELLE
+    if (isset($_POST['save_sector']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $key = clean_input($_POST['sector_key']);
+        $new_key = clean_input($_POST['new_sector_key']);
 
-    // Etkinlik silme işlemi (Admin Paneli)
-    if (isset($_POST['delete_event']) && is_admin()) {
-        if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            header("Location: ?page=admin&tab=events");
-            exit;
-        }
-        $id = (int)$_POST['event_id'];
+        $data = [
+            clean_input($_POST['sector_name']), clean_input($_POST['unit_label']), clean_input($_POST['event_label']), 
+            clean_input($_POST['contact_label']), clean_input($_POST['time_label']), clean_input($_POST['icon']), 
+            isset($_POST['is_active']) ? 1 : 0
+        ];
+        
         try {
-            $sql = "DELETE FROM events WHERE id = ?";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([$id]);
-            $_SESSION['message'] = "Etkinlik başarıyla silindi!";
-        } catch(PDOException $e) {
-            // GÜVENLİK GÜNCELLEMESİ: Hata mesajını gizle
-            error_log("Etkinlik silme hatası (admin): " . $e->getMessage());
-            $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
+            if ($key !== 'new') {
+                $sql = "UPDATE app_sectors SET sector_name=?, unit_label=?, event_label=?, contact_label=?, time_label=?, icon=?, is_active=? WHERE sector_key=?";
+                $data[] = $key;
+                $pdo->prepare($sql)->execute($data);
+                $_SESSION['message'] = "Sektör başarıyla güncellendi!";
+            } else {
+                 if (empty($new_key) || !preg_match('/^[a-z0-9_]+$/', $new_key)) {
+                    $_SESSION['error'] = "Sektör anahtarı sadece küçük harf, rakam ve alt çizgi içermelidir.";
+                    header("Location: ?page=admin&tab=sectors"); exit;
+                 }
+                $sql = "INSERT INTO app_sectors (sector_key, sector_name, unit_label, event_label, contact_label, time_label, icon, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                array_unshift($data, $new_key);
+                $pdo->prepare($sql)->execute($data);
+                $_SESSION['message'] = "Yeni sektör başarıyla eklendi!";
+            }
+        } catch (PDOException $e) {
+            $error_msg = (strpos($e->getMessage(), 'Duplicate entry') !== false) ? "Bu sektör anahtarı zaten mevcut!" : "Veritabanı hatası oluştu.";
+            error_log("Sektör kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = $error_msg;
         }
-        // Admin paneline yönlendir
-        // GÜNCELLEME: Filtreleri koru
-        $query_params = $_GET;
-        unset($query_params['page']); // page=admin zaten ekli
-        unset($query_params['tab']); // tab=events zaten ekli
-        header("Location: ?page=admin&tab=events&" . http_build_query($query_params));
-        exit;
+        header("Location: ?page=admin&tab=sectors"); exit;
+    }
+    
+    // SEKTÖR SİLME
+    if (isset($_POST['delete_sector']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $key = clean_input($_POST['sector_key']);
+        if ($key === $active_sector) {
+            $_SESSION['error'] = "Aktif sektörü silemezsiniz. Lütfen önce başka bir sektörü aktif yapın.";
+        } else {
+             try {
+                $pdo->prepare("DELETE FROM app_sectors WHERE sector_key=?")->execute([$key]);
+                $_SESSION['message'] = "Sektör başarıyla silindi!";
+             } catch (PDOException $e) {
+                error_log("Sektör silme hatası: " . $e->getMessage());
+                $_SESSION['error'] = "Silme işlemi sırasında bir hata oluştu.";
+             }
+        }
+        header("Location: ?page=admin&tab=sectors"); exit;
     }
 
-    // Rapor oluşturma
-    if (isset($_POST['generate_report'])) {
+
+    // YÖNETİCİ KULLANICI KAYDET/GÜNCELLE
+    if (isset($_POST['save_admin_user']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $id = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
+        $username = clean_input($_POST['username']);
+        $password = $_POST['password']; 
+        $full_name = clean_input($_POST['full_name']);
+        $email = clean_input($_POST['email']);
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
+
+        try {
+            // Kullanıcı adı benzersizlik kontrolü
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ? AND id <> ?");
+            $stmt->execute([$username, $id]);
+            if ($stmt->fetchColumn() > 0) {
+                $_SESSION['error'] = "Bu kullanıcı adı zaten kullanılıyor!";
+                header("Location: ?page=admin&tab=users"); exit;
+            }
+
+            if ($id > 0) {
+                // Güncelleme
+                $sql = "UPDATE admin_users SET username=?, full_name=?, email=?, is_active=?";
+                $params = [$username, $full_name, $email, $is_active];
+                if (!empty($password)) {
+                    $sql .= ", password=?";
+                    $params[] = password_hash($password, PASSWORD_DEFAULT);
+                }
+                $sql .= " WHERE id=?";
+                $params[] = $id;
+                $pdo->prepare($sql)->execute($params);
+                $_SESSION['message'] = "Yönetici hesabı güncellendi!";
+            } else {
+                // Yeni Kayıt
+                if (empty($password)) {
+                    $_SESSION['error'] = "Yeni kullanıcı için şifre zorunludur!";
+                    header("Location: ?page=admin&tab=users"); exit;
+                }
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $sql = "INSERT INTO admin_users (username, password, full_name, email, is_active) VALUES (?, ?, ?, ?, ?)";
+                $pdo->prepare($sql)->execute([$username, $hashed_password, $full_name, $email, $is_active]);
+                $_SESSION['message'] = "Yeni yönetici başarıyla eklendi!";
+            }
+        } catch (PDOException $e) {
+            error_log("Yönetici kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = "Veritabanı hatası oluştu.";
+        }
+        header("Location: ?page=admin&tab=users"); exit;
+    }
+
+    // YÖNETİCİ KULLANICI SİLME
+    if (isset($_POST['delete_admin_user']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $id = (int)$_POST['user_id'];
+        if ($id === ($_SESSION['admin_user']['id'] ?? 0)) {
+            $_SESSION['error'] = "Kendi hesabınızı silemezsiniz!";
+        } else {
+            try {
+                $pdo->prepare("DELETE FROM admin_users WHERE id=?")->execute([$id]);
+                $_SESSION['message'] = "Yönetici hesabı başarıyla silindi!";
+            } catch (PDOException $e) {
+                error_log("Yönetici silme hatası: " . $e->getMessage());
+                $_SESSION['error'] = "Silme işlemi sırasında bir hata oluştu.";
+            }
+        }
+        header("Location: ?page=admin&tab=users"); exit;
+    }
+
+
+    // AYARLARI KAYDET (Aktif Sektör Değişimi)
+    if (isset($_POST['save_settings']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $sector = clean_input($_POST['active_sector']);
+        try {
+            $pdo->prepare("INSERT INTO app_settings (setting_key, setting_value) VALUES ('active_sector', ?) ON DUPLICATE KEY UPDATE setting_value=?")
+                ->execute([$sector, $sector]);
+            $_SESSION['message'] = "Sektör ayarı başarıyla güncellendi! Yeni mod: " . $sector;
+        } catch (PDOException $e) {
+             error_log("Ayar kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = "Veritabanı hatası oluştu.";
+        }
+        header("Location: ?page=admin&tab=settings"); exit;
+    }
+    
+    // LİSANS AYARLARINI KAYDET
+    if (isset($_POST['save_license']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
+        $license_date = clean_input($_POST['license_expire_date']);
+        if (!is_valid_date_string($license_date)) {
+            $_SESSION['error'] = "Geçersiz lisans tarihi.";
+            header("Location: ?page=admin&tab=license"); exit;
+        }
+        try {
+            $pdo->prepare("INSERT INTO license_settings (id, license_expire_date) VALUES (1, ?) ON DUPLICATE KEY UPDATE license_expire_date = VALUES(license_expire_date)")
+                ->execute([$license_date]);
+            $_SESSION['message'] = "Lisans tarihi güncellendi!";
+        } catch (PDOException $e) {
+            error_log("Lisans kaydetme hatası: " . $e->getMessage());
+            $_SESSION['error'] = "Lisans kaydedilirken veritabanı hatası oluştu.";
+        }
+        header("Location: ?page=admin&tab=license"); exit;
+    }
+
+    // RAPOR OLUŞTURMA İŞLEMİ
+    if (isset($_POST['generate_report']) && is_admin() && validateCSRFToken($_POST['csrf_token'])) {
         $start_date = clean_input($_POST['start_date']);
         $end_date = clean_input($_POST['end_date']);
-        $unit_ids = isset($_POST['unit_ids']) ? $_POST['unit_ids'] : [];
-        $status_filter = isset($_POST['status_filter']) ? clean_input($_POST['status_filter']) : '';
-        $payment_filter = isset($_POST['payment_filter']) ? clean_input($_POST['payment_filter']) : '';
-        $export_type = isset($_POST['generate_report']) ? clean_input($_POST['generate_report']) : '';
+        $unit_id_filter = clean_input($_POST['unit_id_filter']);
+        $status_filter = clean_input($_POST['status_filter']);
+        $payment_filter = clean_input($_POST['payment_filter']);
+        $export_type = clean_input($_POST['generate_report']); // 'view', 'xls', 'doc'
+
+        if (!is_valid_date_string($start_date) || !is_valid_date_string($end_date)) {
+            $_SESSION['error'] = "Geçersiz tarih aralığı.";
+            header("Location: ?page=admin&tab=events"); exit;
+        }
 
         try {
-            $sql = "SELECT e.*, u.unit_name, u.color
+            $sql = "SELECT e.*, u.unit_name
                     FROM events e
                     JOIN units u ON e.unit_id = u.id
                     WHERE e.event_date BETWEEN ? AND ?";
             $params = [$start_date, $end_date];
-            // Birim filtresi
-            if (!empty($unit_ids)) {
-                if (!in_array('all', $unit_ids)) {
-                    $placeholders = str_repeat('?,', count($unit_ids) - 1) . '?';
-                    $sql .= " AND e.unit_id IN ($placeholders)";
-                    $params = array_merge($params, $unit_ids);
-                }
-                // 'all' seçiliyse (veya 'all' ile birlikte diğerleri), filtre ekleme, tüm birimler gelsin.
-            } else {
-                // $unit_ids boşsa (hiçbir birim seçilmemişse), hiçbir sonuç getirme.
-                $sql .= " AND 1=0"; 
+
+            if (!empty($unit_id_filter)) {
+                $sql .= " AND e.unit_id = ?";
+                $params[] = $unit_id_filter;
             }
-            // Durum filtresi
             if (!empty($status_filter)) {
                 $sql .= " AND e.status = ?";
                 $params[] = $status_filter;
             }
-            // Ödeme filtresi
             if (!empty($payment_filter)) {
                 $sql .= " AND e.payment_status = ?";
                 $params[] = $payment_filter;
             }
-            $sql .= " ORDER BY e.event_date, u.unit_name, e.event_time";
+            
+            $sql .= " ORDER BY e.event_date, e.event_time";
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             $report_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // TXT/DOC/XLS oluşturma
-            if (!empty($export_type) && in_array($export_type, ['txt', 'doc', 'xls'], true)) {
-                $title = "Ajanda ve Rezervasyon Raporu";
-                $date_range = turkish_date('d M Y', strtotime($start_date)) . ' - ' . turkish_date('d M Y', strtotime($end_date));
-                $filters = [];
-                if (!empty($unit_ids) && !in_array('all', $unit_ids)) {
-                    $unit_names = [];
-                    foreach ($unit_ids as $unit_id) {
-                        $stmt = $pdo->prepare("SELECT unit_name FROM units WHERE id = ?");
-                        $stmt->execute([$unit_id]);
-                        $unit = $stmt->fetch(PDO::FETCH_ASSOC);
-                        if ($unit) $unit_names[] = $unit['unit_name'];
-                    }
-                    $filters[] = 'Birimler: ' . implode(', ', $unit_names);
-                } else {
-                    $filters[] = 'Tüm Birimler';
-                }
-                if (!empty($status_filter)) {
-                    // YENİ: Dinamik durum adını al
-                    $filters[] = 'Durum: ' . ($all_event_statuses[$status_filter]['display_name'] ?? $status_filter);
-                }
-                if (!empty($payment_filter)) {
-                    // YENİ: Dinamik ödeme durumu adını al
-                    $filters[] = 'Ödeme: ' . ($all_payment_statuses[$payment_filter]['display_name'] ?? $payment_filter);
-                }
-                $filters_text = implode(' | ', $filters);
-
-                if ($export_type === 'txt') {
-                    generateTXT($report_data, $title, $date_range, $filters_text);
-                }
-                if ($export_type === 'doc') {
-                    generateDOC($report_data, $title, $date_range, $filters_text);
-                }
-                if ($export_type === 'xls') {
-                    generateXLS($report_data, $title, $date_range, $filters_text);
-                }
+            // Filtre metinlerini hazırla
+            $date_range_text = turkish_date('d M Y', strtotime($start_date)) . ' - ' . turkish_date('d M Y', strtotime($end_date));
+            $filters_array = [];
+            if (!empty($unit_id_filter)) {
+                $unit_name = $pdo->prepare("SELECT unit_name FROM units WHERE id = ?");
+                $unit_name->execute([$unit_id_filter]);
+                $filters_array[] = "Birim: " . ($unit_name->fetchColumn() ?: 'Bilinmiyor');
             }
+            if (!empty($status_filter)) $filters_array[] = "Durum: " . ($all_event_statuses[$status_filter]['display_name'] ?? $status_filter);
+            if (!empty($payment_filter)) $filters_array[] = "Ödeme: " . ($all_payment_statuses[$payment_filter]['display_name'] ?? $payment_filter);
+            $filters_text = implode(" | ", $filters_array);
+            
+            // Eğer dosya indirme isteniyorsa
+            if ($export_type === 'xls') {
+                generateXLS($report_data, $lang['title'] . " Raporu", $date_range_text, $filters_text);
+            } elseif ($export_type === 'doc') {
+                generateDOC($report_data, $lang['title'] . " Raporu", $date_range_text, $filters_text);
+            }
+
+            // Sayfa içi gösterim için oturuma kaydet
             $_SESSION['report_data'] = $report_data;
-            $_SESSION['report_filters'] = [
-                'start_date' => $start_date,
-                'end_date' => $end_date,
-                'unit_ids' => $unit_ids,
-                'status_filter' => $status_filter,
-                'payment_filter' => $payment_filter
+            $_SESSION['report_params'] = [
+                'date_range' => $date_range_text,
+                'filters' => $filters_text,
+                'title' => $lang['title'] . " Raporu"
             ];
-            header("Location: ?page=admin&tab=reports");
-            exit;
+            header("Location: ?page=admin&tab=events"); exit;
+            
         } catch(PDOException $e) {
-            // GÜVENLİK GÜNCELLEMESİ: Hata mesajını gizle
             error_log("Rapor oluşturma hatası: " . $e->getMessage());
             $_SESSION['error'] = "Rapor oluşturulurken bir veritabanı hatası oluştu.";
-            header("Location: ?page=admin&tab=reports");
-            exit;
-        }
-    }
-
-    // Sadece admin yetkisine sahip kullanıcılar için çalışsın
-    if (is_admin()) {
-        $message = '';
-        $error = '';
-
-        // Yeni etkinlik ekleme veya güncelleme
-        if (isset($_POST['save_event'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $error = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['event_id']) ? (int)$_POST['event_id'] : 0;
-                $unit_id = clean_input($_POST['unit_id']);
-                $sektor_id = isset($_POST['sektor_id']) ? (int)$_POST['sektor_id'] : 0;
-                $date = clean_input($_POST['event_date']);
-                $name = clean_input($_POST['event_name']);
-                $time = clean_input($_POST['event_time']);
-                $contact = clean_input($_POST['event_contact']);
-                $notes = clean_input($_POST['event_notes']);
-                $status = clean_input($_POST['event_status']);
-                $payment = clean_input($_POST['payment_status']);
-
-                if ($status === 'free' || $status === 'cancelled') {
-                    $payment = null; // null olarak ayarla
-                }
-
-                try {
-                    if ($id > 0) {
-                        $sql = "UPDATE events SET unit_id = ?, sektor_id = ?, event_date = ?, event_name = ?, event_time = ?,
-                                contact_info = ?, notes = ?, status = ?, payment_status = ?, updated_at = NOW()
-                                WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$unit_id, $sektor_id, $date, $name, $time, $contact, $notes, $status, $payment, $id]);
-                        $_SESSION['message'] = "Etkinlik başarıyla güncellendi!";
-                    } else {
-                        $sql = "INSERT INTO events (unit_id, sektor_id, event_date, event_name, event_time, contact_info, notes, status, payment_status)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$unit_id, $sektor_id, $date, $name, $time, $contact, $notes, $status, $payment]);
-                        $_SESSION['message'] = "Etkinlik başarıyla eklendi!";
-                    }
-                    if (isset($_POST['source_page']) && $_POST['source_page'] == 'index') {
-                        header("Location: ".$_SERVER['PHP_SELF'] . "?" . http_build_query($_GET));
-                        exit;
-                    } elseif (isset($_POST['source_page']) && $_POST['source_page'] == 'admin') {
-                        // GÜNCELLEME: Admin panelindeysek, filtreleri koruyarak yönlendir
-                        $query_params = $_GET;
-                        unset($query_params['page']); // page=admin zaten ekli
-                        unset($query_params['tab']); // tab=events zaten ekli
-                        header("Location: ?page=admin&tab=events&" . http_build_query($query_params));
-                        exit;
-                    }
-                } catch(PDOException $e) {
-                    error_log("Etkinlik kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "İşlem sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-        }
-
-        // Birim işlemleri
-        if (isset($_POST['save_unit'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['unit_id']) ? (int)$_POST['unit_id'] : 0;
-                $name = clean_input($_POST['unit_name']);
-                $color = clean_input($_POST['unit_color']);
-                $active = isset($_POST['unit_active']) ? 1 : 0;
-                try {
-                    if ($id > 0) {
-                        $sql = "UPDATE units SET unit_name = ?, color = ?, is_active = ? WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$name, $color, $active, $id]);
-                        $_SESSION['message'] = "Birim başarıyla güncellendi!";
-                    } else {
-                        $sql = "INSERT INTO units (unit_name, color, is_active) VALUES (?, ?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$name, $color, $active]);
-                        $_SESSION['message'] = "Birim başarıyla eklendi!";
-                    }
-                } catch(PDOException $e) {
-                    error_log("Birim kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "İşlem sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=units");
-            exit;
-        }
-
-        // Birim silme
-        if (isset($_POST['delete_unit'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = (int)$_POST['unit_id'];
-                try {
-                    $sql = "DELETE FROM units WHERE id = ?";
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute([$id]);
-                    $_SESSION['message'] = "Birim başarıyla silindi!";
-                } catch(PDOException $e) {
-                    error_log("Birim silme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=units");
-            exit;
-        }
-
-        // Sektör işlemleri
-        if (isset($_POST['save_sector'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['sector_id']) ? (int)$_POST['sector_id'] : 0;
-                $ad = clean_input($_POST['sector_ad']);
-                $aciklama = clean_input($_POST['sector_aciklama']);
-                $aktif = isset($_POST['sector_aktif']) ? 1 : 0;
-                $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9-]+/', '-', $ad), '-'));
-                try {
-                    if ($id > 0) {
-                        $sql = "UPDATE sektorler SET ad = ?, slug = ?, aciklama = ?, aktif = ? WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$ad, $slug, $aciklama, $aktif, $id]);
-                        $_SESSION['message'] = "Sektör başarıyla güncellendi.";
-                    } else {
-                        $sql = "INSERT INTO sektorler (ad, slug, aciklama, aktif) VALUES (?, ?, ?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$ad, $slug, $aciklama, $aktif]);
-                        $_SESSION['message'] = "Sektör başarıyla eklendi.";
-                    }
-                } catch(PDOException $e) {
-                    error_log("Sektör kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Sektör kaydedilirken bir hata oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=sectors");
-            exit;
-        }
-
-        if (isset($_POST['delete_sector'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = (int)$_POST['sector_id'];
-                try {
-                    $check = $pdo->prepare("SELECT COUNT(*) FROM events WHERE sektor_id = ?");
-                    $check->execute([$id]);
-                    $count = (int)$check->fetchColumn();
-                    if ($count > 0) {
-                        $_SESSION['error'] = "Bu sektöre bağlı kayıtlar olduğu için silinemez.";
-                    } else {
-                        $stmt = $pdo->prepare("DELETE FROM sektorler WHERE id = ?");
-                        $stmt->execute([$id]);
-                        $_SESSION['message'] = "Sektör başarıyla silindi.";
-                    }
-                } catch(PDOException $e) {
-                    error_log("Sektör silme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Silme işlemi sırasında bir hata oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=sectors");
-            exit;
-        }
-
-        // Tatil işlemleri
-        if (isset($_POST['save_holiday'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['holiday_id']) ? (int)$_POST['holiday_id'] : 0;
-                $name = clean_input($_POST['holiday_name']);
-                $date = clean_input($_POST['holiday_date']);
-                try {
-                    if ($id > 0) {
-                        $sql = "UPDATE holidays SET holiday_name = ?, holiday_date = ? WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$name, $date, $id]);
-                        $_SESSION['message'] = "Tatil başarıyla güncellendi!";
-                    } else {
-                        $sql = "INSERT INTO holidays (holiday_name, holiday_date) VALUES (?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$name, $date]);
-                        $_SESSION['message'] = "Tatil başarıyla eklendi!";
-                    }
-                } catch(PDOException $e) {
-                    error_log("Tatil kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "İşlem sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=holidays");
-            exit;
-        }
-
-        // Tatil silme
-        if (isset($_POST['delete_holiday'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = (int)$_POST['holiday_id'];
-                try {
-                    $sql = "DELETE FROM holidays WHERE id = ?";
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute([$id]);
-                    $_SESSION['message'] = "Tatil başarıyla silindi!";
-                } catch(PDOException $e) {
-                    error_log("Tatil silme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=holidays");
-            exit;
-        }
-        
-        // Admin kullanıcı işlemleri
-        if (isset($_POST['save_admin_user'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
-                $username = clean_input($_POST['username'] ?? '');
-                $password = $_POST['password'] ?? '';
-                $full_name = clean_input($_POST['full_name'] ?? '');
-                $email = clean_input($_POST['email'] ?? '');
-                $active = isset($_POST['user_active']) ? 1 : 0;
-                if ($username === '') {
-                    throw new Exception("Kullanıcı adı zorunludur!");
-                }
-                if (!preg_match('/^[A-Za-z0-9._-]{3,}$/u', $username)) {
-                    throw new Exception("Kullanıcı adı en az 3 karakter olmalı ve yalnızca harf, rakam, nokta, alt çizgi veya tire içerebilir.");
-                }
-                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    throw new Exception("Geçersiz e-posta adresi!");
-                }
-                try {
-                    if ($id > 0) {
-                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ? AND id <> ?");
-                        $stmt->execute([$username, $id]);
-                        if ($stmt->fetchColumn() > 0) {
-                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
-                        }
-                        $sql = "UPDATE admin_users SET username = ?, full_name = ?, email = ?, is_active = ?";
-                        $params = [$username, $full_name, $email, $active];
-                        if ($password !== '') {
-                            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                            $sql .= ", password = ?";
-                            $params[] = $hashed_password;
-                        }
-                        $sql .= " WHERE id = ?";
-                        $params[] = $id;
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute($params);
-                        $_SESSION['message'] = "Kullanıcı başarıyla güncellendi!";
-                    } else {
-                        if ($password === '') {
-                            throw new Exception("Yeni kullanıcı için şifre zorunludur!");
-                        }
-                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM admin_users WHERE username = ?");
-                        $stmt->execute([$username]);
-                        if ($stmt->fetchColumn() > 0) {
-                            throw new Exception("Bu kullanıcı adı zaten kullanılıyor!");
-                        }
-                        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                        $sql = "INSERT INTO admin_users (username, password, full_name, email, is_active) VALUES (?, ?, ?, ?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$username, $hashed_password, $full_name, $email, $active]);
-                        $_SESSION['message'] = "Kullanıcı başarıyla eklendi!";
-                    }
-                } catch(Exception $e) {
-                    $_SESSION['error'] = "İşlem sırasında hata oluştu: " . $e->getMessage();
-                } catch(PDOException $e) {
-                    error_log("Kullanıcı kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "İşlem sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=users");
-            exit;
-        }
-
-        // Admin kullanıcı silme
-        if (isset($_POST['delete_admin_user'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = (int)$_POST['user_id'];
-                if ($id == $_SESSION['admin_user']['id']) {
-                    $_SESSION['error'] = "Kendi kullanıcınızı silemezsiniz!";
-                } else {
-                    try {
-                        $sql = "DELETE FROM admin_users WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$id]);
-                        $_SESSION['message'] = "Kullanıcı başarıyla silindi!";
-                    } catch(PDOException $e) {
-                        error_log("Kullanıcı silme hatası: " . $e->getMessage());
-                        $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
-                    }
-                }
-            }
-            header("Location: ?page=admin&tab=users");
-            exit;
-        }
-
-        // YENİ: Duyuru işlemleri
-        if (isset($_POST['save_announcement'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = isset($_POST['announcement_id']) ? (int)$_POST['announcement_id'] : 0;
-                $content = clean_input($_POST['content']);
-                $show_author = isset($_POST['show_author']) ? 1 : 0;
-                $start_date = !empty($_POST['start_date']) ? clean_input($_POST['start_date']) : null;
-                $end_date = !empty($_POST['end_date']) ? clean_input($_POST['end_date']) : null;
-                $admin_user_id = $_SESSION['admin_user']['id'];
-                
-                try {
-                    if ($id > 0) {
-                        $sql = "UPDATE announcements SET content = ?, show_author = ?, start_date = ?, end_date = ? WHERE id = ?";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$content, $show_author, $start_date, $end_date, $id]);
-                        $_SESSION['message'] = "Duyuru başarıyla güncellendi!";
-                    } else {
-                        $sql = "INSERT INTO announcements (content, admin_user_id, show_author, start_date, end_date) VALUES (?, ?, ?, ?, ?)";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$content, $admin_user_id, $show_author, $start_date, $end_date]);
-                        $_SESSION['message'] = "Duyuru başarıyla eklendi!";
-                    }
-                } catch(PDOException $e) {
-                    error_log("Duyuru kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "İşlem sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=announcements");
-            exit;
-        }
-        
-        // YENİ: Duyuru silme
-        if (isset($_POST['delete_announcement'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                $id = (int)$_POST['announcement_id'];
-                try {
-                    $sql = "DELETE FROM announcements WHERE id = ?";
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute([$id]);
-                    $_SESSION['message'] = "Duyuru başarıyla silindi!";
-                } catch(PDOException $e) {
-                    error_log("Duyuru silme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Silme işlemi sırasında bir veritabanı hatası oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=announcements");
-            exit;
-        }
-
-        // YENİ: Ayarları Kaydetme
-        if (isset($_POST['save_status_settings'])) {
-            if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-                $_SESSION['error'] = "Geçersiz istek! (CSRF)";
-            } else {
-                try {
-                    $pdo->beginTransaction();
-                    
-                    // Etkinlik Durumlarını Güncelle
-                    if (isset($_POST['event_status']) && is_array($_POST['event_status'])) {
-                        $stmt_event = $pdo->prepare("UPDATE event_statuses SET display_name = ?, color = ? WHERE status_key = ?");
-                        foreach ($_POST['event_status'] as $key => $values) {
-                            $stmt_event->execute([clean_input($values['display_name']), clean_input($values['color']), $key]);
-                        }
-                    }
-
-                    // Ödeme Durumlarını Güncelle
-                    if (isset($_POST['payment_status']) && is_array($_POST['payment_status'])) {
-                        $stmt_payment = $pdo->prepare("UPDATE payment_statuses SET display_name = ?, color = ? WHERE status_key = ?");
-                        foreach ($_POST['payment_status'] as $key => $values) {
-                            $stmt_payment->execute([clean_input($values['display_name']), clean_input($values['color']), $key]);
-                        }
-                    }
-                    
-                    $pdo->commit();
-                    $_SESSION['message'] = "Ayarlar başarıyla güncellendi!";
-                } catch(Exception $e) {
-                    $pdo->rollBack();
-                    error_log("Ayar kaydetme hatası: " . $e->getMessage());
-                    $_SESSION['error'] = "Ayarlar kaydedilirken bir hata oluştu.";
-                }
-            }
-            header("Location: ?page=admin&tab=settings");
-            exit;
+            header("Location: ?page=admin&tab=events"); exit;
         }
     }
 }
 
-// Sayfa parametresi
-$page = isset($_GET['page']) ? clean_input($_GET['page']) : 'index';
-$allowed_pages = ['index', 'admin'];
-if (!in_array($page, $allowed_pages, true)) {
-    $page = 'index';
-}
-
-$selected_sector_id = null;
-if (isset($_GET['sektor_id']) && $_GET['sektor_id'] === '') {
-    $selected_sector_id = 0; // Tümü
-} else {
-    $selected_sector_id = filter_input(INPUT_GET, 'sektor_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-}
-if ($selected_sector_id === false || $selected_sector_id === null || ($selected_sector_id > 0 && !isset($all_sectors[$selected_sector_id]))) {
-    $selected_sector_id = !empty($all_sectors) ? array_key_first($all_sectors) : 0;
-}
-$selected_sector = ($selected_sector_id && isset($all_sectors[$selected_sector_id])) ? $all_sectors[$selected_sector_id] : null;
-$sector_meta = get_sector_meta($selected_sector);
-
-$unit_id = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-if ($unit_id === false || $unit_id === null) {
-    $unit_id = 1;
-}
-
-// Yeni: Yeni ay ve yıl parametrelerini al
-$selected_month = filter_input(INPUT_GET, 'month', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 12]]);
-if ($selected_month === false || $selected_month === null) {
-    $selected_month = (int) date('n');
-}
-
-$current_year = (int) date('Y');
-$selected_year = filter_input(INPUT_GET, 'year', FILTER_VALIDATE_INT, ['options' => ['min_range' => $current_year - 5, 'max_range' => $current_year + 5]]);
-if ($selected_year === false || $selected_year === null) {
-    $selected_year = $current_year;
-}
+// --- VERİ GETİRME VE GÖRÜNÜM AYARLARI ---
+$page = $_GET['page'] ?? 'index';
+$current_year = date('Y');
+$current_month = date('n');
+$selected_month = filter_input(INPUT_GET, 'month', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 12]]) ?? $current_month;
+$selected_year = filter_input(INPUT_GET, 'year', FILTER_VALIDATE_INT, ['options' => ['min_range' => $current_year - 5, 'max_range' => $current_year + 5]]) ?? $current_year;
 
 // Mesaj ve hata kontrolü
-if (isset($_SESSION['message'])) {
-    $message = $_SESSION['message'];
-    unset($_SESSION['message']);
+$message = $_SESSION['message'] ?? null; unset($_SESSION['message']);
+$error = $_SESSION['error'] ?? null; unset($_SESSION['error']);
+
+
+try {
+    $units = $pdo->query("SELECT * FROM units WHERE is_active=1 ORDER BY unit_name")->fetchAll();
+} catch (PDOException $e) {
+    $units = []; 
 }
-if (isset($_SESSION['error'])) {
-    $error = $_SESSION['error'];
-    unset($_SESSION['error']);
-}
+
+$selected_unit = filter_input(INPUT_GET, 'unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?? null;
+if (!$selected_unit && count($units) > 0) $selected_unit = $units[0]['id'];
 
 ?>
 <!DOCTYPE html>
@@ -1309,588 +712,132 @@ if (isset($_SESSION['error'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Küçük İşletmeler İçin Ajanda + Rezervasyon Paneli</title>
+    <title><?php echo htmlspecialchars($lang['title']); ?> - Rezervasyon Paneli</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --primary-color: #1a365d;
-            --secondary-color: #2d6a4f;
-            --accent-color: #e63946;
-            --light-color: #f8f9fa;
-            --dark-color: #14213d;
-            --success-color: #2a9d8f;
-            --warning-color: #f4a261;
-            --info-color: #3a86ff;
-            --bs-border-radius: .6rem;
-            --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-            --hover-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-            
-            <?php
-            // YENİ: Dinamik Durum Renklerini CSS Değişkenleri Olarak Ekle
-            foreach ($all_event_statuses as $key => $status) {
-                echo "--status-color-$key: " . htmlspecialchars($status['color']) . ";\n";
-            }
-            foreach ($all_payment_statuses as $key => $status) {
-                echo "--payment-color-$key: " . htmlspecialchars($status['color']) . ";\n";
-            }
-            ?>
+            --primary-color: #2c3e50;
+            --secondary-color: #34495e;
+            --accent-color: #3498db;
+            --bg-light: #ecf0f1;
+        }
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background-color: var(--bg-light); 
         }
         
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background-color: #f8fafc;
-            color: #334155;
-            line-height: 1.6;
-        }
-        
-        .navbar {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            padding: 0.8rem 0;
-        }
-        
-        .navbar-brand {
-            font-weight: 700;
-            font-size: 1.3rem;
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            line-height: 1.2;
-        }
-
-        .navbar-brand .brand-title {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .navbar-brand i {
-            font-size: 1.5rem;
-        }
-
-        .navbar-brand .brand-subtitle {
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: rgba(255, 255, 255, 0.85);
-            margin-top: 0.15rem;
-        }
-        
-        .navbar-nav .nav-link {
-            font-weight: 500;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            transition: all 0.3s ease;
-        }
-        
-        .navbar-nav .nav-link:hover, .navbar-nav .nav-link.active {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-        
+        /* Genel Mobil Uyumluluk */
         .container {
-            max-width: 1400px;
+            padding-left: 10px;
+            padding-right: 10px;
+        }
+
+        .navbar { 
+            background-color: var(--primary-color); 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        }
+        .card { 
+            border: none; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            margin-bottom: 20px; 
         }
         
-        .card, .admin-panel, .month-selector, .unit-selector, .legend {
-            border: none;
-            border-radius: var(--bs-border-radius);
-            box-shadow: var(--card-shadow);
-            transition: all 0.3s ease;
-            margin-bottom: 1.5rem;
-            overflow: hidden;
+        /* Takvim Görünümü (Mobile First: Tek Sütun) */
+        .calendar-grid { 
+            display: grid; 
+            grid-template-columns: 1fr; /* Mobil: Tek sütun */
+            gap: 15px; /* Mobil: Daha büyük boşluk */
         }
         
-        .card:hover, .admin-panel:hover {
-            transform: translateY(-5px);
-            box-shadow: var(--hover-shadow);
-        }
-        
-        .card-header {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            border: none;
-            padding: 1rem 1.5rem;
-            font-weight: 600;
-        }
-        
-        .card-body {
-            padding: 1.5rem;
-        }
-        
-        .card-title {
-            font-weight: 600;
-            color: var(--primary-color);
-            margin-bottom: 1rem;
-        }
-        
-        .calendar-view {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 1.5rem;
-        }
-        
-        @media (max-width: 768px) {
-            .calendar-view {
-                grid-template-columns: 1fr;
+        /* Tablet ve Masaüstü Görünümü (992px üstü) */
+        @media (min-width: 992px) { 
+            .calendar-grid { 
+                grid-template-columns: repeat(7, 1fr); /* Masaüstü: 7 sütun */
+                gap: 8px; /* Masaüstü: Daha küçük boşluk */
+            }
+            .day-card {
+                min-height: 150px;
+            }
+            .admin-nav-tabs .nav-link {
+                /* Yatay düzen için */
+                border-bottom: 2px solid transparent !important;
             }
         }
         
-        .day-card {
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
-            background-color: white;
-            border-radius: var(--bs-border-radius);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            transition: all 0.3s ease;
+        /* Gün Kartları ve Etkinlikler (Dokunmatik Kullanım İçin Büyütme) */
+        .day-card { 
+            background: white; 
+            border-radius: 8px; 
+            border: 1px solid #dee2e6; 
+            transition: transform 0.2s; 
+            min-height: 100px; /* Mobil min yükseklik */
+        }
+        .day-card:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); 
+        }
+        .day-header { 
+            background: #f8f9fa; 
+            padding: 10px 15px; /* Mobil: Daha büyük padding */
+            font-weight: bold; 
+            border-radius: 8px 8px 0 0; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
         }
         
-        .day-card:hover {
-            transform: translateY(-5px);
-            box-shadow: var(--hover-shadow);
+        .day-card.weekend .day-header { background-color: #ffeaa7; color: #d35400; }
+        .day-card.holiday .day-header { background-color: #fcebeb; color: #e74c3c; } 
+
+        .event-item { 
+            font-size: 0.9rem; /* Mobil: Daha okunaklı font */
+            padding: 10px; /* Mobil: Büyük dokunmatik hedef */
+            margin-bottom: 8px; 
+            border-radius: 6px; 
+            border-left: 5px solid #3498db; /* Kalın border */
+            background: #fdfdfd; 
+            cursor: pointer; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
+        .event-item:hover { background: #eee; }
         
-        .day-card.no-events {
-            background-color: #f8f9fa;
+        /* Yönetim Paneli Navigasyonu (Mobil) */
+        .admin-nav-tabs .list-group-item {
+            border-radius: 4px;
+            margin-bottom: 5px;
+            border: 1px solid #ddd;
         }
-        
-        .day-header {
-            font-weight: 600;
-            padding: 1rem;
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            font-size: 0.95rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .day-header-content {
-            flex-grow: 1;
-        }
-        
-        .day-header-actions {
-            margin-left: 10px;
-        }
-        
-        .day-card.weekend .day-header {
-            background: linear-gradient(135deg, var(--secondary-color), #40916c);
-        }
-        
-        .day-card.holiday .day-header {
-            background: linear-gradient(135deg, var(--warning-color), #e76f51);
-        }
-        
-        .day-card .day-content {
-            padding: 1rem;
-            flex-grow: 1;
-        }
-        
-        .event-item {
-            position: relative;
-            padding: 1rem;
-            border-top: 1px solid #e9ecef;
-            transition: background-color 0.2s ease;
-            border-radius: 0.5rem;
-            margin-bottom: 0.5rem;
-            background-color: #f8fafc;
-        }
-.event-item:first-child {
-            border-top: none;
-        }
-        
-        .event-item:hover {
-            background-color: #e2e8f0;
-        }
-        
-        .event-item h6 {
-            margin-bottom: 0.25rem; /* Küçültüldü */
-            font-weight: 600;
-            color: var(--primary-color);
-            font-size: 0.85rem; /* Küçültüldü */
-        }
-        
-        .event-time, .event-contact, .event-notes {
-            font-size: 0.8rem; /* Küçültüldü */
-            color: #64748b;
-            margin-bottom: 3px; /* Küçültüldü */
-        }
-        
-        .event-status {
-            margin-top: 0.5rem;
-        }
-        
-        .event-status .badge {
-            margin-right: 5px;
-            font-size: 0.75rem;
-            padding: 0.4rem 0.6rem;
-        }
-        
-        .login-container {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 2rem;
-            background-color: white;
-            border-radius: var(--bs-border-radius);
-            box-shadow: var(--card-shadow);
-        }
-        
-        footer {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            padding: 1.5rem 0;
-            margin-top: 3rem;
-        }
-        
-        .welcome-message {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            border-radius: var(--bs-border-radius);
-            padding: 2rem;
-            margin-bottom: 2rem;
-            box-shadow: var(--card-shadow);
-        }
-        
-        .admin-badge {
-            background-color: var(--success-color);
-            color: white;
-            padding: 0.4rem 0.8rem;
-            border-radius: 1rem;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        
-        .btn-edit-quick, .btn-delete-quick, .btn-add-day {
-            position: relative;
-            color: #94a3b8;
-            background-color: transparent;
-            border: none;
-            padding: 0.5rem;
-            line-height: 1;
-            border-radius: 50%;
-            transition: all 0.2s ease;
-            opacity: 0;
-            z-index: 10;
-            font-size: 0.8rem;
-            margin-left: 5px;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .event-item:hover .btn-edit-quick,
-        .event-item:hover .btn-delete-quick,
-        .day-card:hover .btn-add-day {
-            opacity: 1;
-        }
-        
-        /* GÜNCELLENDİ: Grid görünümünde hover butonu her zaman görünür olsun */
-        @media (min-width: 992px) {
-            .day-card:hover .btn-add-day {
-                opacity: 1;
-            }
-            .day-card .day-header-actions .btn-add-day {
-                opacity: 0; /* Normalde gizli */
-            }
-            .day-card:hover .day-header-actions .btn-add-day {
-                opacity: 1; /* Hover'da görünür */
-            }
-        }
-        
-        .btn-edit-quick:hover {
-            color: var(--primary-color);
-            background-color: #e2e8f0;
-        }
-        
-        .btn-delete-quick:hover {
-            color: var(--accent-color);
-            background-color: #fecaca;
-        }
-        
-        .btn-add-day:hover {
-            color: var(--info-color);
-            background-color: #dbeafe;
-        }
-        
-        .payment-status-container {
-            transition: all 0.3s ease;
-        }
-        
-        .payment-status-container.hidden {
-            display: none !important;
-        }
-        
-        /* .bg-purple artık kullanılmıyor, var(--payment-color-to_be_paid) tarafından yönetiliyor */
-        
-        .report-filters {
-            background-color: #f8fafc;
-            padding: 1.5rem;
-            border-radius: var(--bs-border-radius);
-            margin-bottom: 1.5rem;
-        }
-        
-        .unit-checkboxes {
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid #e2e8f0;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: white;
-        }
-        
-        .report-summary {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            padding: 1.5rem;
-            border-radius: var(--bs-border-radius);
-            margin-bottom: 1.5rem;
-        }
-        
-        .export-buttons {
-            margin-top: 1.5rem;
-            padding: 1.5rem;
-            background-color: #f8fafc;
-            border-radius: var(--bs-border-radius);
-        }
-        
-        .table-responsive {
-            overflow-x: auto;
-            border-radius: var(--bs-border-radius);
-            box-shadow: 0 0 0 1px #e2e8f0;
-        }
-        
-        .table {
-            margin-bottom: 0;
-        }
-        
-        .table th {
+
+        .admin-nav-tabs .list-group-item.active {
             background-color: var(--primary-color);
-            color: white;
-            font-weight: 600;
-            border: none;
-            padding: 1rem;
-        }
-        
-        .table td {
-            padding: 1rem;
-            vertical-align: middle;
-            border-color: #e2e8f0;
-        }
-        
-        .table tbody tr:hover {
-            background-color: #f1f5f9;
-        }
-        
-        .table th.actions, .table td.actions {
-            width: 1%;
-            white-space: nowrap;
-            text-align: center;
-        }
-        
-        .action-buttons .btn {
-            margin: 0 2px;
-            padding: 0.25rem 0.5rem;
-            font-size: 0.875rem;
-            border-radius: 0.4rem;
-        }
-        
-        .existing-events {
-            max-height: 300px;
-            overflow-y: auto;
-            margin-bottom: 1rem;
-            border: 1px solid #e2e8f0;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            background-color: white;
-        }
-        
-        .event-list-item {
-            padding: 0.8rem;
-            border-bottom: 1px solid #e2e8f0;
-            border-radius: 0.4rem;
-            margin-bottom: 0.5rem;
-            background-color: #f8fafc;
-        }
-        
-        .event-list-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-        }
-        
-        .announcement-section {
-            background-color: white;
-            border-radius: var(--bs-border-radius);
-            box-shadow: var(--card-shadow);
-            margin-bottom: 2rem;
-            overflow: hidden;
-        }
-        
-        .accordion-button:not(.collapsed) {
-            background-color: var(--primary-color);
-            color: white;
-        }
-        
-        .accordion-button:focus {
-            box-shadow: 0 0 0 0.25rem rgba(26, 54, 93, 0.25);
-        }
-        
-        .badge-new {
-            font-size: 0.75em;
-            padding: .3em .6em;
-            margin-left: 8px;
-        }
-        
-        .announcement-meta {
-            font-size: 0.8rem;
-            color: #64748b;
-            margin-top: 0.5rem;
-        }
-        
-        .btn {
-            border-radius: 0.5rem;
-            font-weight: 500;
-            padding: 0.5rem 1rem;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            border: none;
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.3);
-        }
-        
-        .btn-success {
-            background: linear-gradient(135deg, var(--success-color), #2a9d8f);
-            border: none;
-        }
-        
-        .btn-warning {
-            background: linear-gradient(135deg, var(--warning-color), #f4a261);
-            border: none;
-        }
-        
-        .btn-danger {
-            background: linear-gradient(135deg, var(--accent-color), #e63946);
-            border: none;
-        }
-        
-        .btn-info {
-            background: linear-gradient(135deg, var(--info-color), #3a86ff);
-            border: none;
-        }
-        
-        .form-control, .form-select {
-            border-radius: 0.5rem;
-            padding: 0.5rem 1rem;
-            border: 1px solid #cbd5e1;
-            transition: all 0.3s ease;
-        }
-        
-        .form-control:focus, .form-select:focus {
-            box-shadow: 0 0 0 0.25rem rgba(26, 54, 93, 0.25);
             border-color: var(--primary-color);
         }
         
-        .alert {
-            border-radius: 0.5rem;
-            border: none;
-            padding: 1rem 1.5rem;
-        }
-        
-        .nav-tabs {
-            border-bottom: 2px solid #e2e8f0;
-        }
-        
-        .nav-tabs .nav-link {
-            border: none;
-            border-radius: 0.5rem 0.5rem 0 0;
-            padding: 0.75rem 1.5rem;
-            font-weight: 500;
-            color: #64748b;
-            transition: all 0.3s ease;
-        }
-        
-        .nav-tabs .nav-link.active {
-            color: var(--primary-color);
-            background-color: white;
-            border-bottom: 3px solid var(--primary-color);
-        }
-        
-        .nav-tabs .nav-link:hover {
-            color: var(--primary-color);
-            background-color: #f1f5f9;
-        }
-        
-        .modal-content {
-            border-radius: var(--bs-border-radius);
-            border: none;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
-        }
-        
-        .modal-header {
-            background: linear-gradient(135deg, var(--primary-color), #2c5282);
-            color: white;
-            border-radius: var(--bs-border-radius) var(--bs-border-radius) 0 0;
-            padding: 1.5rem;
-        }
-        
-        .modal-title {
-            font-weight: 600;
-        }
-        
-        .modal-body {
-            padding: 1.5rem;
-        }
-        
-        .modal-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid #e2e8f0;
-        }
-        
-        .badge {
-            font-weight: 500;
-            border-radius: 0.5rem;
-        }
-        
-        .legend .badge {
-            margin-right: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .input-group .btn {
-            border-radius: 0 0.5rem 0.5rem 0;
-        }
-        
-        .input-group .form-control:first-child {
-            border-radius: 0.5rem 0 0 0.5rem;
-        }
-        
-        .input-group-text {
-            border-radius: 0.5rem 0 0 0.5rem;
+        /* Form Elementleri (Dokunmatik uyum) */
+        .form-control, .form-select, .btn {
+            padding: 10px 15px;
+            font-size: 1rem;
+            border-radius: 6px;
         }
 
+
+        .badge-status { font-size: 0.7rem; }
+        .report-table th { background-color: var(--primary-color) !important; color: white !important; }
+        .report-summary { background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #dee2e6;}
+
         <?php
-        // YENİ: Dinamik Badge Stilleri
+        // Dinamik Badge Stilleri
         function generateBadgeStyle($status) {
-            $style = "background-color: " . htmlspecialchars($status['color']) . " !important; color: white !important;";
-            // Basit parlaklık kontrolü
+            $style = "background-color: " . htmlspecialchars($status['color']) . " !important; color: white !important; font-weight: 500;";
             $hex = ltrim($status['color'], '#');
             if (strlen($hex) == 6) {
                 $r = hexdec(substr($hex, 0, 2));
                 $g = hexdec(substr($hex, 2, 2));
                 $b = hexdec(substr($hex, 4, 2));
                 $luminance = (0.299 * $r + 0.587 * $g + 0.114 * $b) / 255;
-                if ($luminance > 0.65) { // Açık renkler için eşik
-                    $style .= " color: #212529 !important; text-shadow: none;";
-                } else {
-                    $style .= " text-shadow: 1px 1px 1px rgba(0,0,0,0.2);";
-                }
+                if ($luminance > 0.65) $style .= " color: #212529 !important; text-shadow: none;";
             }
             return $style;
         }
@@ -1902,2083 +849,820 @@ if (isset($_SESSION['error'])) {
             echo ".badge-payment-$key { " . generateBadgeStyle($status) . " }\n";
         }
         ?>
-
-        /* YENİ: Takvim Grid Stilleri */
-        .calendar-header {
-            display: none; /* Mobilde gizli */
-        }
-
-        .calendar-view {
-            display: grid;
-            /* Mobilde (varsayılan) dikey liste */
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-        }
-
-        @media (min-width: 992px) {
-            /* Masaüstü: Haftalık Grid Başlığı */
-            .calendar-header {
-                display: grid;
-                grid-template-columns: repeat(7, 1fr);
-                gap: 5px;
-                margin-bottom: 0.5rem;
-            }
-            .calendar-header-day {
-                text-align: center;
-                font-weight: 600;
-                padding: 0.75rem 0.25rem;
-                background-color: var(--primary-color);
-                color: white;
-                border-radius: 0.5rem;
-            }
-
-            /* Masaüstü: 7 Sütunlu Takvim Grid'i */
-            .calendar-view {
-                grid-template-columns: repeat(7, 1fr);
-                gap: 0; /* Boşlukları kaldır, kenarlıklar yönetecek */
-                border: 1px solid #e2e8f0;
-                border-radius: var(--bs-border-radius);
-                overflow: hidden;
-                background-color: white;
-            }
-
-            .day-card {
-                border-radius: 0;
-                margin-bottom: 0;
-                box-shadow: none;
-                border: none;
-                border-top: 1px solid #e9ecef;
-                border-left: 1px solid #e9ecef;
-                min-height: 150px; /* Gün kutularına minimum yükseklik */
-                transition: background-color 0.2s ease;
-            }
-            
-            /* Grid kenarlıklarını temizle */
-            .calendar-view .day-card:nth-child(7n + 1) {
-                border-left: none; 
-            }
-            .calendar-view .day-card:nth-child(-n + 7) {
-                border-top: none;
-            }
-            
-            /* Hover efektlerini kaldır/azalt */
-            .card:hover, .admin-panel:hover {
-                transform: none;
-                box-shadow: var(--card-shadow);
-            }
-            .day-card:hover {
-                transform: none;
-                box-shadow: none;
-                background-color: #f8fafc;
-            }
-            
-            /* Gün Başlığını Küçült */
-            .day-header {
-                font-weight: 600;
-                padding: 0.5rem;
-                background: none; /* Arkaplanı kaldır */
-                color: #334155; /* Normal metin rengi */
-                font-size: 0.85rem;
-                border-bottom: none; /* Kenarlığı kaldır */
-            }
-
-            /* Hafta sonu/Tatil renklerini ayarla */
-            .day-card.weekend .day-header-content .day-number {
-                color: var(--secondary-color);
-            }
-            .day-card.holiday .day-header-content .day-number {
-                color: #b45309; /* Koyu turuncu */
-                font-weight: 700;
-            }
-
-            /* Mobildeki tam tarihi gizle */
-            .day-header-content .day-full-date {
-                display: none;
-            }
-            /* Masaüstünde gün numarasını göster */
-            .day-header-content .day-number {
-                display: block;
-                font-size: 1.1rem;
-                font-weight: 600;
-            }
-            
-            /* Başlıktaki rozetleri gizle (renk yeterli) - DÜZELTME: Tatil etiketleri artık gösteriliyor */
-            .day-header-content .badge {
-                /* display: none; */
-            }
-
-            /* İçeriği küçült */
-            .day-card .day-content {
-                padding: 0.5rem;
-                flex-grow: 1;
-            }
-            
-            /* "Etkinlik yok" yazısını gizle */
-            .day-card.no-events .day-content .text-muted {
-                display: none;
-            }
-            
-            /* Boş gün kutuları */
-            .day-card.empty {
-                background-color: #f8fafc;
-                min-height: auto;
-            }
-        }
-/* GÜNCELLENDİ: Masaüstü için gün numarası (varsayılan gizli) */
-        .day-header-content .day-number {
-            display: none;
-        }
-
-        /* GÜNCELLENDİ: Mobildeki başlık (varsayılan görünür) */
-        .day-header-content .day-full-date {
-            display: block;
-        }
-
-        
-        /* GÖLGELENDİRME EKLENTİSİ: Etkinlik kutularının daha belirgin görünmesi için */
-        .day-card {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
-            transition: all 0.3s ease;
-        }
-        
-        .day-card:hover {
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 4px 8px rgba(0, 0, 0, 0.12) !important;
-            transform: translateY(-2px);
-        }
-        
-        .event-item {
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
-            border-radius: 0.4rem;
-            margin-bottom: 0.75rem;
-            transition: all 0.2s ease;
-        }
-        
-        .event-item:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08) !important;
-        }
-        
-        /* Takvim grid görünümü için gölgelendirme ayarı */
-        @media (min-width: 992px) {
-            .calendar-view .day-card {
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06) !important;
-            }
-            
-            .calendar-view .day-card:hover {
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
-            }
-        }
-
-    
-        
-        /* TABLO ÇERÇEVE EKLENTİSİ: Tüm tablolara siyah çerçeve */
-        .table {
-            border: 2px solid #000000 !important;
-            border-collapse: separate !important;
-            border-radius: 8px !important;
-            overflow: hidden !important;
-        }
-        
-        .table th {
-            border: 1px solid #000000 !important;
-            background-color: var(--primary-color) !important;
-            color: white !important;
-            padding: 12px !important;
-        }
-        
-        .table td {
-            border: 1px solid #000000 !important;
-            padding: 10px !important;
-        }
-        
-        .table tbody tr:nth-child(even) {
-            background-color: #f8f9fa !important;
-        }
-        
-        .table tbody tr:hover {
-            background-color: #e9ecef !important;
-        }
-        
-        .table-responsive {
-            border: 2px solid #000000 !important;
-            border-radius: 8px !important;
-        }
-        
-    
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark">
-        <div class="container">
-            <a class="navbar-brand" href="?page=index">
-                <span class="brand-title">
-                    <i class="fas fa-calendar-check"></i>
-                    <span class="brand-name">Küçük İşletmeler Ajanda & Rezervasyon</span>
-                </span>
-                <span class="brand-subtitle">Çok sektörlü randevu ve rezervasyon paneli</span>
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link <?php echo $page === 'index' ? 'active' : ''; ?>" href="?page=index">Ana Sayfa</a>
+
+<nav class="navbar navbar-expand-lg navbar-dark mb-4">
+    <div class="container">
+        <a class="navbar-brand" href="?page=index">
+            <i class="fas <?php echo $lang['icon']; ?> me-2"></i><?php echo htmlspecialchars($lang['title']); ?>
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"><span class="navbar-toggler-icon"></span></button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link <?php echo $page=='index'?'active':''; ?>" href="?page=index">Takvim</a></li>
+                <?php if(is_admin()): ?>
+                    <li class="nav-item"><a class="nav-link <?php echo $page=='admin'?'active':''; ?>" href="?page=admin&tab=events">Yönetim Paneli</a></li>
+                    <li class="nav-item d-flex align-items-center ms-2">
+                        <span class="badge bg-light text-dark me-2"><?php echo htmlspecialchars($_SESSION['admin_user']['username']); ?></span>
+                        <form method="post"><button name="admin_logout" class="btn btn-sm btn-outline-danger">Çıkış</button></form>
                     </li>
+                <?php else: ?>
+                    <li class="nav-item"><a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#loginModal">Giriş</a></li>
+                <?php endif; ?>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <?php if (isset($error) && $error): ?>
+        <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
+    <?php endif; ?>
+    <?php if (isset($message) && $message): ?>
+        <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
+    <?php endif; ?>
+    <?php if(isset($login_error) && $login_error): // Giriş denemesi başarısızsa ?>
+        <div class="alert alert-danger"><?php echo htmlspecialchars($login_error); ?></div>
+    <?php endif; ?>
+
+    <?php if($page === 'index'): ?>
+        <div class="card p-3">
+            <form method="get" class="row g-3 align-items-center">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold"><?php echo $lang['unit_label']; ?></label>
+                    <select name="unit_id" class="form-select" onchange="this.form.submit()">
+                        <?php if (empty($units)): ?>
+                            <option value="">Lütfen yönetici panelinden birim/kaynak ekleyin.</option>
+                        <?php endif; ?>
+                        <?php foreach($units as $u): ?>
+                            <option value="<?php echo $u['id']; ?>" <?php echo $selected_unit==$u['id']?'selected':''; ?>><?php echo htmlspecialchars($u['unit_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Ay</label>
+                    <select name="month" class="form-select" onchange="this.form.submit()">
+                        <?php for($k=1; $k<=12; $k++): ?>
+                            <option value="<?php echo $k; ?>" <?php echo $selected_month==$k?'selected':''; ?>><?php echo $turkish_months[$k]; ?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Yıl</label>
+                    <input type="number" name="year" class="form-control" value="<?php echo $selected_year; ?>" onchange="this.form.submit()">
+                </div>
+                <div class="col-md-2 text-end">
                     <?php if(is_admin()): ?>
-                        <li class="nav-item">
-                            <a class="nav-link <?php echo $page === 'admin' ? 'active' : ''; ?>" href="?page=admin">Admin Paneli</a>
-                        </li>
-                        <li class="nav-item">
-                            <span class="nav-link admin-badge">
-                                <i class="fas fa-user me-1"></i><?php echo htmlspecialchars($_SESSION['admin_user']['username']); ?>
-                            </span>
-                        </li>
-                        <li class="nav-item">
-                            <form method="post" class="d-inline">
-                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                                <button type="submit" name="admin_logout" class="btn btn-outline-light btn-sm">Çıkış</button>
-                            </form>
-                        </li>
-                    <?php else: ?>
-                        <li class="nav-item">
-                            <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#loginModal">Yönetici Girişi</a>
-                        </li>
+                        <label class="form-label d-block">&nbsp;</label>
+                        <button type="button" class="btn btn-success w-100" onclick="newEvent()">
+                            <i class="fas fa-plus"></i> Yeni Ekle
+                        </button>
                     <?php endif; ?>
-                </ul>
+                </div>
+            </form>
+        </div>
+        
+        <div class="card p-2 mb-4">
+            <div class="d-flex gap-3 flex-wrap justify-content-center">
+                <h6>Durumlar:</h6>
+                <?php foreach($all_event_statuses as $key=>$st): ?>
+                    <span class="badge badge-status-<?php echo $key; ?>"><?php echo $st['display_name']; ?></span>
+                <?php endforeach; ?>
+                <h6>Ödeme:</h6>
+                <?php foreach($all_payment_statuses as $key=>$st): ?>
+                    <span class="badge badge-payment-<?php echo $key; ?>"><?php echo $st['display_name']; ?></span>
+                <?php endforeach; ?>
             </div>
         </div>
-    </nav>
 
-    <?php
-    // Index sayfası içeriği
-    if ($page === 'index') {
-        $csrf_token = generateCSRFToken();
-        try {
-            // YENİ: Aktif duyuruları getir
-            $announcements_sql = "SELECT a.*, au.full_name 
-                                FROM announcements a 
-                                JOIN admin_users au ON a.admin_user_id = au.id
-                                WHERE (a.start_date IS NULL OR a.start_date <= NOW()) 
-                                AND (a.end_date IS NULL OR a.end_date >= NOW())
-                                ORDER BY a.created_at DESC";
-            $announcements_stmt = $pdo->prepare($announcements_sql);
-            $announcements_stmt->execute();
-            $announcements = $announcements_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            $sql = "SELECT * FROM units WHERE is_active = TRUE ORDER BY unit_name";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute();
-            $units = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch(PDOException $e) {
-            die("Veriler getirilirken hata oluştu. Lütfen yönetici ile iletişime geçin.");
-        }
-        $selected_unit = $unit_id;
-        $search_term = isset($_GET['search']) ? clean_input($_GET['search']) : '';
-        try {
-            $sql = "SELECT e.*, u.unit_name, u.color, s.ad AS sektor_ad, s.slug AS sektor_slug
-                    FROM events e
-                    JOIN units u ON e.unit_id = u.id
-                    LEFT JOIN sektorler s ON e.sektor_id = s.id";
-            $params = [];
-            $where_clauses = [];
+        <?php if ($selected_unit): ?>
+        <div class="calendar-grid mb-5">
+            <?php
+            $days_in_month = cal_days_in_month(CAL_GREGORIAN, $selected_month, $selected_year);
+            $first_day_w = date('N', strtotime("$selected_year-$selected_month-01"));
             
-            // HATA DÜZELTMESİ BURADA BAŞLIYOR
-            if (!empty($search_term)) {
-                $where_clauses[] = "(e.event_name LIKE :search1
-                                   OR e.contact_info LIKE :search2
-                                   OR e.notes LIKE :search3
-                                   OR e.event_time LIKE :search4
-                                   OR u.unit_name LIKE :search5)";
-                $search_value = "%$search_term%";
-                $params[':search1'] = $search_value;
-                $params[':search2'] = $search_value;
-                $params[':search3'] = $search_value;
-                $params[':search4'] = $search_value;
-                $params[':search5'] = $search_value;
-            }
-            // HATA DÜZELTMESİ BURADA BİTİYOR
-            else {
-                $where_clauses[] = "u.id = :unit_id";
-                $params[':unit_id'] = $selected_unit;
-                $where_clauses[] = "YEAR(event_date) = :year";
-                $params[':year'] = $selected_year;
-                $where_clauses[] = "MONTH(event_date) = :month";
-                $params[':month'] = $selected_month;
-            }
-            if ($selected_sector_id) {
-                $where_clauses[] = "e.sektor_id = :sector_id";
-                $params[':sector_id'] = $selected_sector_id;
+            // Boş kutular (Pazartesi başlangıç)
+            for($i=1; $i<$first_day_w; $i++) echo '<div class="d-none d-lg-block"></div>';
+
+            // Etkinlikleri Çek
+            $events_by_date = [];
+            try {
+                $raw_events = $pdo->prepare("SELECT * FROM events WHERE unit_id = ? AND event_date BETWEEN ? AND ? ORDER BY event_time");
+                $raw_events->execute([$selected_unit, "$selected_year-$selected_month-01", "$selected_year-$selected_month-$days_in_month"]);
+                foreach($raw_events->fetchAll() as $row) {
+                    $events_by_date[$row['event_date']][] = $row;
+                }
+            } catch (PDOException $e) {
+                echo '<div class="alert alert-danger w-100">Etkinlikler yüklenemedi. Veritabanı yapısını kontrol edin.</div>';
             }
 
-            if (!empty($where_clauses)) {
-                $sql .= " WHERE " . implode(" AND ", $where_clauses);
-            }
-            $sql .= " ORDER BY e.event_date, e.event_time";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            $events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $grouped_events = [];
-            foreach ($events as $event) {
-                $date = $event['event_date'];
-                $grouped_events[$date][] = $event;
-            }
-        } catch(PDOException $e) {
-            die("Veritabanı hatası: " . $e->getMessage());
-        }
-        ?>
-        <div class="container mt-4">
-            <?php if (isset($error) && $error): ?>
-                <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
-            <?php endif; ?>
-            <?php if (isset($message) && $message): ?>
-                <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
-            <?php endif; ?>
 
-            <div class="row mb-3 g-3">
-                <div class="col-md-6">
-                    <div class="card p-3">
-                        <form method="get" class="row g-2 align-items-end">
-                            <input type="hidden" name="page" value="index">
-                            <div class="col-12">
-                                <label class="form-label fw-semibold" for="sektor_id">Sektör Filtresi</label>
-                                <select class="form-select" id="sektor_id" name="sektor_id" onchange="this.form.submit()">
-                                    <option value="">Tümü</option>
-                                    <?php foreach ($all_sectors as $sid => $sector): ?>
-                                        <option value="<?php echo $sid; ?>" <?php echo ($selected_sector_id === $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
+            for($day=1; $day<=$days_in_month; $day++):
+                $date = sprintf("%04d-%02d-%02d", $selected_year, $selected_month, $day);
+                $is_weekend = (date('N', strtotime($date)) >= 6);
+                $is_holiday_data = is_holiday($date, $pdo);
+                $is_holiday_flag = $is_holiday_data !== false;
+                
+                $card_class = '';
+                if ($is_holiday_flag) {
+                    $card_class = 'holiday';
+                } elseif ($is_weekend) {
+                    $card_class = 'weekend';
+                }
+            ?>
+                <div class="day-card <?php echo $card_class; ?>">
+                    <div class="day-header">
+                        <span><?php echo $day; ?> <small class="fw-normal"><?php echo mb_substr($turkish_months[$selected_month],0,3); ?></small></span>
+                        <small class="text-muted"><?php echo turkish_date('l', strtotime($date)); ?></small>
+                        <?php if($is_holiday_flag): ?>
+                            <span class="badge bg-danger"><?php echo htmlspecialchars($is_holiday_data['holiday_name']); ?></span>
+                        <?php endif; ?>
+                        <?php if(is_admin()): ?>
+                            <a href="#" class="text-success" onclick="newEventForDay('<?php echo $date; ?>')" title="Yeni <?php echo $lang['event_label']; ?> Ekle"><i class="fas fa-plus-circle"></i></a>
+                        <?php endif; ?>
+                    </div>
+                    <div class="p-2">
+                        <?php if (empty($day_events)): ?>
+                            <p class="text-muted text-center" style="font-size: 0.8rem;">Kayıt yok.</p>
+                        <?php endif; ?>
+                        <?php foreach($day_events as $evt): 
+                            $status_color = $all_event_statuses[$evt['status']]['color'] ?? '#ccc';
+                            $payment_text = '';
+                            if (!empty($evt['payment_status'])) {
+                                $payment_data = $all_payment_statuses[$evt['payment_status']] ?? null;
+                                if ($payment_data) {
+                                    $payment_text = ' <span class="badge badge-payment-' . $evt['payment_status'] . ' ms-1">' . $payment_data['display_name'] . '</span>';
+                                }
+                            }
+                        ?>
+                            <div class="event-item" style="border-left-color: <?php echo $status_color; ?>" 
+                                 onclick='editEvent(<?php echo json_encode($evt); ?>)'>
+                                <strong><?php echo htmlspecialchars($evt['event_time']); ?></strong>
+                                <?php echo $payment_text; ?><br>
+                                <?php echo htmlspecialchars($evt['event_name']); ?>
                             </div>
-                        </form>
+                        <?php endforeach; ?>
                     </div>
                 </div>
-                <div class="col-md-6">
-                    <div class="card p-3">
-                        <div class="fw-semibold mb-1">Aktif Başlık</div>
-                        <div><?php echo htmlspecialchars($sector_meta['calendar_title']); ?></div>
-                    </div>
+            <?php endfor; ?>
+        </div>
+        <?php else: ?>
+             <div class="alert alert-warning">Yönetilecek birim veya kaynak bulunamadı. Lütfen Admin Panelinden (Yönetim Paneli) birim/kaynak ekleyin.</div>
+        <?php endif; ?>
+
+    <?php elseif($page === 'admin'): if(!is_admin()) header("Location: ?page=index"); ?>
+        <div class="row">
+            <div class="col-md-3">
+                <div class="list-group admin-nav-tabs">
+                    <a href="?page=admin&tab=units" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'units')=='units'?'active':''; ?>"><?php echo $lang['unit_label']; ?> Yönetimi</a>
+                    <a href="?page=admin&tab=events" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='events'?'active':''; ?>">Raporlama & Etkinlik</a>
+                    <a href="?page=admin&tab=users" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='users'?'active':''; ?>">Yöneticiler</a>
+                    <a href="?page=admin&tab=sectors" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='sectors'?'active':''; ?>">Sektörler</a>
+                    <a href="?page=admin&tab=settings" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='settings'?'active':''; ?>">Aktif Sektör Ayarı</a>
+                    <a href="?page=admin&tab=license" class="list-group-item list-group-item-action <?php echo ($_GET['tab']??'')=='license'?'active':''; ?>">Lisans Ayarları</a>
                 </div>
             </div>
-
-            <?php // YENİ: Duyurular Bölümü ?>
-            <?php if (!empty($announcements)): ?>
-                <div class="announcement-section">
-                    <div class="accordion" id="announcementsAccordion">
-                        <div class="accordion-item">
-                            <h2 class="accordion-header" id="headingOne">
-                                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAnnouncements" aria-expanded="true" aria-controls="collapseAnnouncements">
-                                    <i class="fas fa-bullhorn me-2"></i> Önemli Duyurular (<?php echo count($announcements); ?>)
-                                </button>
-                            </h2>
-                            <div id="collapseAnnouncements" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#announcementsAccordion">
-                                <div class="accordion-body">
-                                    <?php foreach ($announcements as $announcement): ?>
-                                        <div class="p-2 mb-2 border-bottom">
-                                            <p class="mb-1">
-                                                <?php 
-                                                // 48 saatten daha yeni ise "Yeni" etiketi göster
-                                                if (strtotime($announcement['created_at']) > time() - (48 * 3600)) {
-                                                    echo '<span class="badge bg-danger badge-new">YENİ</span>';
-                                                }
-                                                ?>
-                                                <?php echo nl2br(htmlspecialchars($announcement['content'])); ?>
-                                            </p>
-                                            <div class="announcement-meta">
-                                                <span>Yayınlanma: <?php echo turkish_date('d M Y, H:i', strtotime($announcement['created_at'])); ?></span>
-                                                <?php if ($announcement['show_author'] && !empty($announcement['full_name'])): ?>
-                                                    <span> | Yazar: <?php echo htmlspecialchars($announcement['full_name']); ?></span>
-                                                <?php endif; ?>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            <?php endif; ?>
-            
-            <div class="row mb-4">
-                <div class="col-md-6">
-                    <div class="unit-selector card">
-                        <div class="card-body">
-                            <h5 class="card-title">Birim Seçimi</h5>
-                            <form method="get" accept-charset="UTF-8">
-                                <select class="form-select" name="unit_id" onchange="this.form.submit()">
-                                    <?php foreach ($units as $unit): ?>
-                                        <option value="<?php echo $unit['id']; ?>" <?php echo $selected_unit == $unit['id'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($unit['unit_name']); ?>
+            <div class="col-md-9">
+                <div class="card p-4">
+                    <?php 
+                    $tab = $_GET['tab'] ?? 'events';
+                    if($tab == 'settings'): 
+                    ?>
+                        <h4>Aktif Sektör Seçimi</h4>
+                        <p>İşletme tipinize göre arayüzü özelleştirin. Seçiminiz, takvimdeki **Birim/Oda** ve **Etkinlik** gibi tüm terimleri değiştirecektir.</p>
+                        <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                            <div class="mb-3">
+                                <label class="form-label">Aktif Sektör Modu</label>
+                                <select name="active_sector" class="form-select form-select-lg">
+                                    <?php foreach($sector_configs as $key => $conf): ?>
+                                        <option value="<?php echo $key; ?>" <?php echo $active_sector==$key?'selected':''; ?>>
+                                            <?php echo $conf['title']; ?> (<?php echo $conf['unit_label']; ?> / <?php echo $conf['event_label']; ?>)
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
-                                <input type="hidden" name="month" value="<?php echo $selected_month; ?>">
-                                <input type="hidden" name="year" value="<?php echo $selected_year; ?>">
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="month-selector card">
-                        <div class="card-body">
-                            <h5 class="card-title">Ay Seçimi</h5>
-                            <form method="get" id="monthForm" accept-charset="UTF-8">
-                                <div class="input-group">
-                                    <select class="form-select" id="monthSelect" name="month" onchange="this.form.submit()">
-                                        <?php for ($m = 1; $m <= 12; $m++): ?>
-                                            <option value="<?php echo $m; ?>" <?php echo $selected_month == $m ? 'selected' : ''; ?>>
-                                                <?php echo $turkish_months[$m]; ?>
-                                            </option>
-                                        <?php endfor; ?>
-                                    </select>
-                                    <input type="number" class="form-control" name="year" value="<?php echo $selected_year; ?>" min="2000" max="2100">
-                                    <button class="btn btn-primary" type="submit">Git</button>
-                                </div>
-                                <input type="hidden" name="unit_id" value="<?php echo $selected_unit; ?>">
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">Etkinlik Ara</h5>
-                    <form method="get" accept-charset="UTF-8">
-                        <div class="input-group">
-                            <input type="text" class="form-control" name="search" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="Etkinlik adı, iletişim, notlar...">
-                            <button class="btn btn-primary" type="submit">Ara</button>
-                            <?php if (!empty($search_term)): ?>
-                                <a href="?unit_id=<?php echo $selected_unit; ?>&month=<?php echo $selected_month; ?>&year=<?php echo $selected_year; ?>" class="btn btn-secondary">Aramayı Temizle</a>
-                            <?php endif; ?>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="legend card mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">Renk Anlamları</h5>
-                    <div class="d-flex flex-wrap gap-3">
-                        <?php // YENİ: Dinamik efsane (legend) ?>
-                        <?php foreach ($all_event_statuses as $key => $status): ?>
-                            <span class="badge badge-status-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
-                        <?php endforeach; ?>
-                        <?php foreach ($all_payment_statuses as $key => $status): ?>
-                            <span class="badge badge-payment-<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></span>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="calendar-header" aria-hidden="true">
-                <div class="calendar-header-day">Pazartesi</div>
-                <div class="calendar-header-day">Salı</div>
-                <div class="calendar-header-day">Çarşamba</div>
-                <div class="calendar-header-day">Perşembe</div>
-                <div class="calendar-header-day">Cuma</div>
-                <div class="calendar-header-day">Cumartesi</div>
-                <div class="calendar-header-day">Pazar</div>
-            </div>
-
-            <div class="calendar-view">
-                <?php
-                if (!empty($search_term)) {
-                    // ARAMA SONUÇLARI (DEĞİŞMEDİ)
-                    // Arama sonuçları her zaman dikey liste olarak kalır
-                    if (empty($grouped_events)) {
-                        echo '<div class="alert alert-info w-100">Arama kriterlerinize uygun etkinlik bulunamadı.</div>';
-                    } else {
-                        ksort($grouped_events);
-                        foreach ($grouped_events as $date => $day_events):
-                            $is_holiday = is_holiday($date, $pdo);
-                            $is_weekend = is_weekend($date);
-                            $class = '';
-                            if ($is_holiday) $class = 'holiday';
-                            elseif ($is_weekend) $class = 'weekend';
-                            if (empty($day_events)) $class .= ' no-events';
-                ?>
-                            <div class="day-card <?php echo $class; ?>">
-                                <div class="day-header">
-                                    <div class="day-header-content">
-                                        <span class="day-full-date">
-                                            <?php echo turkish_date('d M Y, l', strtotime($date)); ?>
-                                        </span>
-                                        <span class="day-number"><?php echo (int)date('d', strtotime($date)); ?></span>
-
-                                        <?php if ($is_holiday): ?>
-                                            <span class="badge bg-warning ms-2"><?php echo htmlspecialchars($is_holiday['holiday_name']); ?></span>
-                                        <?php elseif ($is_weekend): ?>
-                                            <span class="badge bg-info ms-2">Hafta Sonu</span>
-                                        <?php endif; ?>
-                                    </div>
-                                    <?php if (is_admin()): ?>
-                                        <div class="day-header-actions">
-                                            <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal" onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
-                                                <i class="fas fa-plus"></i>
-                                            </button>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="day-content">
-                                    <?php foreach ($day_events as $event): ?>
-                                        <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <h6 class="mb-0"><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
-                                                <?php if (!empty($event['sektor_ad'])): ?>
-                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars($event['sektor_ad']); ?></span>
-                                                <?php endif; ?>
-                                            </div>
-                                            <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
-                                            <?php if (!empty($event['contact_info'])): ?>
-                                                <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
-                                            <?php endif; ?>
-                                            <?php if (!empty($event['notes'])): ?>
-                                                <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
-                                            <?php endif; ?>
-                                            <div class="event-status">
-                                                <?php // YENİ: Dinamik durum etiketleri ?>
-                                                <?php
-                                                    $event_status = $event['status'] ?? '';
-                                                    $status_data = $all_event_statuses[$event_status] ?? null;
-                                                    if ($status_data):
-                                                ?>
-                                                    <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                                
-                                                <?php 
-                                                $event_payment_status = $event['payment_status'] ?? '';
-                                                $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-                                                if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
-                                                ?>
-                                                    <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                            </div>
-                                            <?php if (is_admin()): ?>
-                                                <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                        data-event-id="<?php echo $event['id']; ?>"
-                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
-                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
-                                                        data-event-date="<?php echo $event['event_date']; ?>"
-                                                        data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
-                                                        data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
-                                                        data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
-                                                        data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
-                                                        data-event-status="<?php echo $event['status'] ?? ''; ?>"
-                                                        data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
                             </div>
-                <?php
-                        endforeach;
-                    }
-                } else {
-                    // TAKVİM GÖRÜNÜMÜ (GÜNCELLENDİ)
-                    $days_in_month = cal_days_in_month(CAL_GREGORIAN, $selected_month, $selected_year);
-                    $first_day_timestamp = strtotime("$selected_year-$selected_month-01");
-                    $start_day_of_week = (int)date('N', $first_day_timestamp); // 1 (Pzt) - 7 (Paz)
-
-                    // 1. Ayın ilk gününden önceki boş günler (Pazartesi 1 ise)
-                    for ($i = 1; $i < $start_day_of_week; $i++) {
-                        echo '<div class="day-card empty" aria-hidden="true"></div>';
-                    }
+                            <button type="submit" name="save_settings" class="btn btn-primary">Ayarları Kaydet</button>
+                        </form>
                     
-                    // 2. Ayın günleri
-                    for ($day = 1; $day <= $days_in_month; $day++) {
-                        $date = sprintf("%04d-%02d-%02d", $selected_year, $selected_month, $day);
-                        $day_events = $grouped_events[$date] ?? [];
-                        $is_holiday = is_holiday($date, $pdo);
-                        $is_weekend = is_weekend($date);
-                        $class = '';
-                        if ($is_holiday) $class = 'holiday';
-                        elseif ($is_weekend) $class = 'weekend';
-                        if (empty($day_events)) $class .= ' no-events';
-                ?>
-                        <div class="day-card <?php echo $class; ?>">
-                            <div class="day-header">
-                                <div class="day-header-content">
-                                    <span class="day-full-date">
-                                        <?php echo turkish_date('d M Y, l', strtotime($date)); ?>
-                                    </span>
-                                    <span class="day-number"><?php echo $day; ?></span>
-                                    
-                                    <?php if ($is_holiday): ?>
-                                        <span class="badge bg-warning ms-2"><?php echo htmlspecialchars($is_holiday['holiday_name']); ?></span>
-                                    <?php elseif ($is_weekend): ?>
-                                        <span class="badge bg-info ms-2">Hafta Sonu</span>
-                                    <?php endif; ?>
-                                </div>
-                                <?php if (is_admin()): ?>
-                                    <div class="day-header-actions">
-                                        <button class="btn-add-day" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                onclick="newEventForDay('<?php echo $date; ?>', '<?php echo $selected_unit; ?>')">
-                                            <i class="fas fa-plus"></i>
-                                        </button>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                            <div class="day-content">
-                                <?php if (empty($day_events)): ?>
-                                    <p class="text-muted text-center my-4">Etkinlik yok</p>
-                                <?php else: ?>
-                                    <?php foreach ($day_events as $event): ?>
-                                        <div class="event-item" style="border-left: 4px solid <?php echo htmlspecialchars($event['color'] ?? '#ccc'); ?>;">
-                                            <h6><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></h6>
-                                            <p class="event-time"><i class="fas fa-clock me-1"></i><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></p>
-                                            <?php if (!empty($event['contact_info'])): ?>
-                                                <p class="event-contact"><i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($event['contact_info']); ?></p>
-                                            <?php endif; ?>
-                                            <?php if (!empty($event['notes'])): ?>
-                                                <p class="event-notes"><i class="fas fa-sticky-note me-1"></i><?php echo htmlspecialchars($event['notes']); ?></p>
-                                            <?php endif; ?>
-                                            <div class="event-status">
-                                                <?php // YENİ: Dinamik durum etiketleri ?>
-                                                <?php
-                                                    $event_status = $event['status'] ?? '';
-                                                    $status_data = $all_event_statuses[$event_status] ?? null;
-                                                    if ($status_data):
-                                                ?>
-                                                    <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                                
-                                                <?php 
-                                                $event_payment_status = $event['payment_status'] ?? '';
-                                                $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-                                                if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
-                                                ?>
-                                                    <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
-                                                <?php endif; ?>
-                                            </div>
-                                            <?php if (is_admin()): ?>
-                                                <button class="btn-edit-quick" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                        data-event-id="<?php echo $event['id']; ?>"
-                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
-                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
-                                                        data-event-date="<?php echo $event['event_date']; ?>"
-                                                        data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
-                                                        data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
-                                                        data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
-                                                        data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
-                                                        data-event-status="<?php echo $event['status'] ?? ''; ?>"
-                                                        data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn-delete-quick" onclick="confirmDelete(<?php echo $event['id']; ?>, this, '<?php echo $csrf_token; ?>')">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                <?php
-                    } // for $day
-                    
-                    // 3. Ayın son gününden sonraki boş günler (Pazar 7 ise)
-                    $last_day_of_week = (int)date('N', strtotime("$selected_year-$selected_month-$days_in_month"));
-                    if ($last_day_of_week < 7) {
-                        for ($i = $last_day_of_week; $i < 7; $i++) {
-                            echo '<div class="day-card empty" aria-hidden="true"></div>';
+                    <?php elseif($tab == 'users'): 
+                        try {
+                            $admin_users = $pdo->query("SELECT id, username, full_name, email, is_active, created_at FROM admin_users ORDER BY username")->fetchAll();
+                        } catch (PDOException $e) {
+                             $admin_users = [];
                         }
-                    }
-                } // end if $search_term
-                ?>
-            </div>
-        </div>
-    <?php
-    } elseif ($page === 'admin') {
-        if (!is_admin()) {
-            header("Location: ?page=index");
-            exit;
-        }
-        $tab = isset($_GET['tab']) ? clean_input($_GET['tab']) : 'events';
-        $allowed_tabs = ['events', 'units', 'holidays', 'announcements', 'reports', 'users', 'settings', 'sectors'];
-        if (!in_array($tab, $allowed_tabs, true)) {
-            $tab = 'events';
-        }
-        // YENİ: Admin paneli etkinlik arama ve filtreleme terimleri
-        $search_admin_term = isset($_GET['search_admin']) ? clean_input($_GET['search_admin']) : '';
-        $filter_unit_id = filter_input(INPUT_GET, 'filter_unit_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        if ($filter_unit_id === false || $filter_unit_id === null) {
-            $filter_unit_id = 0;
-        }
-        $filter_sector_id = filter_input(INPUT_GET, 'filter_sector_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        if ($filter_sector_id === false || $filter_sector_id === null) {
-            $filter_sector_id = 0;
-        }
-        $filter_start_date = isset($_GET['filter_start_date']) ? clean_input($_GET['filter_start_date']) : '';
-        if (!empty($filter_start_date) && !is_valid_date_string($filter_start_date)) {
-            $filter_start_date = '';
-        }
-        $filter_end_date = isset($_GET['filter_end_date']) ? clean_input($_GET['filter_end_date']) : '';
-        if (!empty($filter_end_date) && !is_valid_date_string($filter_end_date)) {
-            $filter_end_date = '';
-        }
-        $filter_status = isset($_GET['filter_status']) ? clean_input($_GET['filter_status']) : '';
-        $filter_payment_status = isset($_GET['filter_payment_status']) ? clean_input($_GET['filter_payment_status']) : '';
-
-        // VARSAYILAN: Yönetici tablosunda yalnızca mevcut ayın etkinliklerini göster
-        if (empty($filter_start_date) && empty($filter_end_date)) {
-            $filter_start_date = date('Y-m-01');
-            $filter_end_date = date('Y-m-t');
-        }
-        
-        $csrf_token = generateCSRFToken();
-    ?>
-        <div class="container mt-4">
-            <?php if (isset($error) && $error): ?>
-                <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
-            <?php endif; ?>
-            <?php if (isset($message) && $message): ?>
-                <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
-            <?php endif; ?>
-
-            <div class="welcome-message">
-                <h2 class="mb-3">Hoş Geldiniz, <?php echo htmlspecialchars($_SESSION['admin_user']['full_name'] ?? $_SESSION['admin_user']['username']); ?></h2>
-                <p class="mb-0">Admin panelinden etkinlikleri, birimleri ve tatilleri yönetebilirsiniz.</p>
-            </div>
-            <ul class="nav nav-tabs mb-4">
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'events' ? 'active' : ''; ?>" href="?page=admin&tab=events">Etkinlik Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'units' ? 'active' : ''; ?>" href="?page=admin&tab=units">Birim Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'sectors' ? 'active' : ''; ?>" href="?page=admin&tab=sectors">Sektör Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'holidays' ? 'active' : ''; ?>" href="?page=admin&tab=holidays">Tatil Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'announcements' ? 'active' : ''; ?>" href="?page=admin&tab=announcements">Duyuru Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'reports' ? 'active' : ''; ?>" href="?page=admin&tab=reports">Raporlama</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'users' ? 'active' : ''; ?>" href="?page=admin&tab=users">Kullanıcı Yönetimi</a></li>
-                <li class="nav-item"><a class="nav-link <?php echo $tab === 'settings' ? 'active' : ''; ?>" href="?page=admin&tab=settings">Ayarlar</a></li> <?php // YENİ SEKME ?>
-            </ul>
-            <div class="admin-panel card">
-                <div class="card-body">
-                    <?php if ($tab === 'events'): ?>
-                        <h5 class="card-title">Etkinlik Yönetimi</h5>
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#eventModal" onclick="newEvent()">
-                                <i class="fas fa-plus me-1"></i>Yeni Etkinlik Ekle
-                            </button>
-                        </div>
-
-                        <div class="report-filters mb-4">
-                            <form method="get" accept-charset="UTF-8">
-                                <input type="hidden" name="page" value="admin">
-                                <input type="hidden" name="tab" value="events">
-                                <div class="row g-3">
-                                    <div class="col-md-3">
-                                        <label for="filter_sector_id" class="form-label">Sektör</label>
-                                        <select class="form-select" id="filter_sector_id" name="filter_sector_id">
-                                            <option value="">Tüm Sektörler</option>
-                                            <?php foreach ($all_sectors as $sid => $sector): ?>
-                                                <option value="<?php echo $sid; ?>" <?php echo ($filter_sector_id == $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="filter_unit_id" class="form-label">Birim</label>
-                                        <select class="form-select" id="filter_unit_id" name="filter_unit_id">
-                                            <option value="">Tüm Birimler</option>
-                                            <?php
-                                            try {
-                                                $units_stmt = $pdo->prepare("SELECT id, unit_name FROM units WHERE is_active = TRUE ORDER BY unit_name");
-                                                $units_stmt->execute();
-                                                $all_units_filter = $units_stmt->fetchAll(PDO::FETCH_ASSOC);
-                                                foreach ($all_units_filter as $unit):
-                                            ?>
-                                                <option value="<?php echo $unit['id']; ?>" <?php echo ($filter_unit_id == $unit['id']) ? 'selected' : ''; ?>>
-                                                    <?php echo htmlspecialchars($unit['unit_name']); ?>
-                                                </option>
-                                            <?php 
-                                                endforeach; 
-                                            } catch(PDOException $e) {
-                                                echo '<option value="">Birimler yüklenemedi</option>';
-                                            }
-                                            ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="filter_start_date" class="form-label">Başlangıç Tarihi</label>
-                                        <input type="date" class="form-control" id="filter_start_date" name="filter_start_date" value="<?php echo htmlspecialchars($filter_start_date); ?>">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="filter_end_date" class="form-label">Bitiş Tarihi</label>
-                                        <input type="date" class="form-control" id="filter_end_date" name="filter_end_date" value="<?php echo htmlspecialchars($filter_end_date); ?>">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="filter_status" class="form-label">Durum</label>
-                                        <?php // YENİ: Dinamik Durum Filtresi ?>
-                                        <select class="form-select" id="filter_status" name="filter_status">
-                                            <option value="">Tümü</option>
-                                            <?php foreach ($all_event_statuses as $key => $status): ?>
-                                                <option value="<?php echo $key; ?>" <?php echo ($filter_status == $key) ? 'selected' : ''; ?>>
-                                                    <?php echo htmlspecialchars($status['display_name']); ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="filter_payment_status" class="form-label">Ödeme Durumu</label>
-                                        <?php // YENİ: Dinamik Ödeme Filtresi ?>
-                                        <select class="form-select" id="filter_payment_status" name="filter_payment_status">
-                                            <option value="">Tümü</option>
-                                            <?php foreach ($all_payment_statuses as $key => $status): ?>
-                                                <option value="<?php echo $key; ?>" <?php echo ($filter_payment_status == $key) ? 'selected' : ''; ?>>
-                                                    <?php echo htmlspecialchars($status['display_name']); ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label for="search_admin" class="form-label">Arama (Etkinlik, birim, iletişim...)</label>
-                                        <input type="text" name="search_admin" id="search_admin" class="form-control" placeholder="Arama terimi..." value="<?php echo htmlspecialchars($search_admin_term); ?>">
-                                    </div>
-                                    <div class="col-md-3 d-flex align-items-end">
-                                        <button class="btn btn-primary w-100 me-2" type="submit"><i class="fas fa-filter"></i> Filtrele</button>
-                                        <a href="?page=admin&tab=events" class="btn btn-secondary w-100" title="Filtreleri Temizle"><i class="fas fa-times"></i> Temizle</a>
-                                    </div>
-                                </div>
-                            </form>
+                    ?>
+                        <div class="d-flex justify-content-between mb-3">
+                            <h4>Yönetici Kullanıcıları</h4>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#adminUserModal" onclick="newAdminUser()">Yeni Yönetici Ekle</button>
                         </div>
                         <div class="table-responsive">
                             <table class="table table-hover">
                                 <thead>
                                     <tr>
-                                        <th>ID</th>
-                                        <th>Tarih</th>
-                                        <th>Sektör</th>
-                                        <th>Birim</th>
-                                        <th>Etkinlik Adı</th>
-                                        <th>Saat</th>
-                                        <th>İletişim</th>
-                                        <th>Durum</th>
-                                        <th>Ödeme</th>
-                                        <th class="actions">İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                    try {
-                                        // GÜNCELLEME: Arama ve filtreleme terimlerine göre filtreleme yap
-                                        $params_admin = [];
-                                        $sql = "SELECT e.*, u.unit_name, s.ad AS sektor_ad
-                                                FROM events e
-                                                JOIN units u ON e.unit_id = u.id
-                                                LEFT JOIN sektorler s ON e.sektor_id = s.id";
-                                        
-                                        $where_clauses_admin = [];
-
-                                        // *** BAŞLANGIÇ: Düzeltilen Kısım ***
-                                        if (!empty($search_admin_term)) {
-                                            // DÜZELTME: Her LIKE için benzersiz bir ad-değişken (placeholder) kullanılmalı.
-                                            $where_clauses_admin[] = "(e.event_name LIKE :search1 OR u.unit_name LIKE :search2 OR e.contact_info LIKE :search3 OR e.notes LIKE :search4)";
-                                            $search_value = "%$search_admin_term%";
-                                            $params_admin[':search1'] = $search_value;
-                                            $params_admin[':search2'] = $search_value;
-                                            $params_admin[':search3'] = $search_value;
-                                            $params_admin[':search4'] = $search_value;
-                                        }
-                                        // *** BİTİŞ: Düzeltilen Kısım ***
-
-                                        if (!empty($filter_unit_id)) {
-                                            $where_clauses_admin[] = "e.unit_id = :unit_id";
-                                            $params_admin[':unit_id'] = $filter_unit_id;
-                                        }
-                                        if (!empty($filter_sector_id)) {
-                                            $where_clauses_admin[] = "e.sektor_id = :sector_id";
-                                            $params_admin[':sector_id'] = $filter_sector_id;
-                                        }
-                                        if (!empty($filter_start_date)) {
-                                            $where_clauses_admin[] = "e.event_date >= :start_date";
-                                            $params_admin[':start_date'] = $filter_start_date;
-                                        }
-                                        if (!empty($filter_end_date)) {
-                                            $where_clauses_admin[] = "e.event_date <= :end_date";
-                                            $params_admin[':end_date'] = $filter_end_date;
-                                        }
-                                        if (!empty($filter_status)) {
-                                            $where_clauses_admin[] = "e.status = :status";
-                                            $params_admin[':status'] = $filter_status;
-                                        }
-                                        if (!empty($filter_payment_status)) {
-                                            $where_clauses_admin[] = "e.payment_status = :payment_status";
-                                            $params_admin[':payment_status'] = $filter_payment_status;
-                                        }
-
-                                        if (!empty($where_clauses_admin)) {
-                                            $sql .= " WHERE " . implode(" AND ", $where_clauses_admin);
-                                        }
-                                        
-                                        $sql .= " ORDER BY e.event_date DESC, e.event_time";
-                                        
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute($params_admin);
-                                        $admin_events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-                                        foreach ($admin_events as $event):
-                                            // YENİ: Durum ve Ödeme metinlerini dinamik olarak al
-                                            $event_status = $event['status'] ?? '';
-                                            $status_data = $all_event_statuses[$event_status] ?? null;
-                                            $status_text = $status_data ? htmlspecialchars($status_data['display_name']) : $event_status;
-                                            
-                                            $payment_text = '-';
-                                            $event_payment_status = $event['payment_status'] ?? '';
-                                            $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-
-                                            if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data) {
-                                                $payment_text = htmlspecialchars($payment_data['display_name']);
-                                            }
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $event['id']; ?></td>
-                                                <td><?php echo turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')); ?></td>
-                                                <td><?php echo htmlspecialchars($event['sektor_ad'] ?? '-'); ?></td>
-                                                <td><?php echo htmlspecialchars($event['unit_name'] ?? ''); ?></td>
-                                                <td><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></td>
-                                                <td><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></td>
-                                                <td><?php echo htmlspecialchars($event['contact_info'] ?? ''); ?></td>
-                                                <td><?php echo $status_text; ?></td>
-                                                <td><?php echo $payment_text; ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-event" data-bs-toggle="modal" data-bs-target="#eventModal"
-                                                        data-event-id="<?php echo $event['id']; ?>"
-                                                        data-sector-id="<?php echo $event['sektor_id']; ?>"
-                                                        data-unit-id="<?php echo $event['unit_id']; ?>"
-                                                                data-event-date="<?php echo $event['event_date']; ?>"
-                                                                data-event-name="<?php echo htmlspecialchars($event['event_name'] ?? ''); ?>"
-                                                                data-event-time="<?php echo htmlspecialchars($event['event_time'] ?? ''); ?>"
-                                                                data-event-contact="<?php echo htmlspecialchars($event['contact_info'] ?? ''); ?>"
-                                                                data-event-notes="<?php echo htmlspecialchars($event['notes'] ?? ''); ?>"
-                                                                data-event-status="<?php echo $event['status'] ?? ''; ?>"
-                                                                data-event-payment="<?php echo $event['payment_status'] ?? ''; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu etkinliği silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="event_id" value="<?php echo $event['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_event" class="btn btn-sm btn-danger">
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="9">Etkinlikler getirilirken hata oluştu. (Hata: <?php echo $e->getMessage(); ?>)</td></tr>
-                                    <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php elseif ($tab === 'units'): ?>
-                        <h5 class="card-title">Birim Yönetimi</h5>
-                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#unitModal" onclick="newUnit()">
-                            <i class="fas fa-plus me-1"></i>Yeni Birim Ekle
-                        </button>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Birim Adı</th>
-                                        <th>Renk</th>
-                                        <th>Aktif</th>
-                                        <th class="actions">İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                    try {
-                                        $sql = "SELECT * FROM units ORDER BY unit_name";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $units = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($units as $unit):
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $unit['id']; ?></td>
-                                                <td><?php echo htmlspecialchars($unit['unit_name']); ?></td>
-                                                <td><span class="badge" style="background-color: <?php echo $unit['color']; ?>; color: #fff; text-shadow: 1px 1px 1px #000;"><?php echo $unit['color']; ?></span></td>
-                                                <td><?php echo $unit['is_active'] ? 'Evet' : 'Hayır'; ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-unit" data-bs-toggle="modal" data-bs-target="#unitModal"
-                                                                data-unit-id="<?php echo $unit['id']; ?>"
-                                                                data-unit-name="<?php echo htmlspecialchars($unit['unit_name']); ?>"
-                                                                data-unit-color="<?php echo $unit['color']; ?>"
-                                                                data-unit-active="<?php echo $unit['is_active']; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu birimi silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="unit_id" value="<?php echo $unit['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_unit" class="btn btn-sm btn-danger">
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="5">Birimler getirilirken hata oluştu.</td></tr>
-                                    <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php elseif ($tab === 'sectors'): ?>
-                        <h5 class="card-title">Sektör Yönetimi</h5>
-                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#sectorModal" onclick="newSector()">
-                            <i class="fas fa-plus me-1"></i>Yeni Sektör Ekle
-                        </button>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Sektör Adı</th>
-                                        <th>Açıklama</th>
-                                        <th>Durum</th>
-                                        <th class="actions">İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                    try {
-                                        $sql = "SELECT s.*, COUNT(e.id) AS event_count FROM sektorler s LEFT JOIN events e ON e.sektor_id = s.id GROUP BY s.id ORDER BY s.ad";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $sektorler = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($sektorler as $sektor):
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $sektor['id']; ?></td>
-                                                <td><?php echo htmlspecialchars($sektor['ad']); ?></td>
-                                                <td><?php echo htmlspecialchars($sektor['aciklama'] ?? ''); ?></td>
-                                                <td><?php echo $sektor['aktif'] ? 'Aktif' : 'Pasif'; ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-sector" data-bs-toggle="modal" data-bs-target="#sectorModal"
-                                                                data-sector-id="<?php echo $sektor['id']; ?>"
-                                                                data-sector-ad="<?php echo htmlspecialchars($sektor['ad']); ?>"
-                                                                data-sector-aciklama="<?php echo htmlspecialchars($sektor['aciklama'] ?? ''); ?>"
-                                                                data-sector-aktif="<?php echo $sektor['aktif']; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu sektörü silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="sector_id" value="<?php echo $sektor['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_sector" class="btn btn-sm btn-danger" <?php echo ($sektor['event_count'] > 0) ? 'disabled title="Bu sektöre bağlı kayıtlar var"' : ''; ?>>
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="5">Sektörler getirilirken hata oluştu.</td></tr>
-                                    <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php elseif ($tab === 'holidays'): ?>
-                        <h5 class="card-title">Tatil Yönetimi</h5>
-                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#holidayModal" onclick="newHoliday()">
-                            <i class="fas fa-plus me-1"></i>Yeni Tatil Ekle
-                        </button>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Tatil Adı</th>
-                                        <th>Tarih</th>
-                                        <th class="actions">İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                    try {
-                                        $sql = "SELECT * FROM holidays ORDER BY holiday_date";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $holidays = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($holidays as $holiday):
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $holiday['id']; ?></td>
-                                                <td><?php echo htmlspecialchars($holiday['holiday_name']); ?></td>
-                                                <td><?php echo turkish_date('d M Y', strtotime($holiday['holiday_date'])); ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-holiday" data-bs-toggle="modal" data-bs-target="#holidayModal"
-                                                                data-holiday-id="<?php echo $holiday['id']; ?>"
-                                                                data-holiday-name="<?php echo htmlspecialchars($holiday['holiday_name']); ?>"
-                                                                data-holiday-date="<?php echo $holiday['holiday_date']; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu tatili silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="holiday_id" value="<?php echo $holiday['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_holiday" class="btn btn-sm btn-danger">
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="4">Tatiller getirilirken hata oluştu.</td></tr>
-                                    <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php // YENİ: Duyuru Yönetimi Sekmesi ?>
-                    <?php elseif ($tab === 'announcements'): ?>
-                        <h5 class="card-title">Duyuru Yönetimi</h5>
-                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#announcementModal" onclick="newAnnouncement()">
-                            <i class="fas fa-plus me-1"></i>Yeni Duyuru Ekle
-                        </button>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead style="white-space:normal;">
-                                    <tr>
-                                        <th>ID</th>
-                                        <th style="min-width: 300px;">İçerik</th>
-                                        <th>Yazar</th>
-                                        <th>Başlangıç Tarihi</th>
-                                        <th>Bitiş Tarihi</th>
-                                        <th class="actions">İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody style="white-space:normal;">
-                                    <?php
-                                    try {
-                                        $sql = "SELECT a.*, au.username, au.full_name FROM announcements a JOIN admin_users au ON a.admin_user_id = au.id ORDER BY a.created_at DESC";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $all_announcements = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($all_announcements as $ann):
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $ann['id']; ?></td>
-                                                <td><?php echo htmlspecialchars(mb_substr($ann['content'], 0, 100)) . (mb_strlen($ann['content']) > 100 ? '...' : ''); ?></td>
-                                                <td>
-                                                    <?php echo htmlspecialchars($ann['full_name'] ?: $ann['username']); ?>
-                                                    <?php if ($ann['show_author']): ?>
-                                                        <span class="badge bg-success">Görünür</span>
-                                                    <?php else: ?>
-                                                        <span class="badge bg-secondary">Gizli</span>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td><?php echo $ann['start_date'] ? turkish_date('d M Y H:i', strtotime($ann['start_date'])) : '-'; ?></td>
-                                                <td><?php echo $ann['end_date'] ? turkish_date('d M Y H:i', strtotime($ann['end_date'])) : '-'; ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-announcement" data-bs-toggle="modal" data-bs-target="#announcementModal"
-                                                                data-announcement-id="<?php echo $ann['id']; ?>"
-                                                                data-content="<?php echo htmlspecialchars($ann['content']); ?>"
-                                                                data-show-author="<?php echo $ann['show_author']; ?>"
-                                                                data-start-date="<?php echo $ann['start_date'] ? date('Y-m-d\TH:i', strtotime($ann['start_date'])) : ''; ?>"
-                                                                data-end-date="<?php echo $ann['end_date'] ? date('Y-m-d\TH:i', strtotime($ann['end_date'])) : ''; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu duyuruyu silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="announcement_id" value="<?php echo $ann['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_announcement" class="btn btn-sm btn-danger">
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="6">Duyurular getirilirken hata oluştu.</td></tr>
-                                    <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php elseif ($tab === 'reports'): ?>
-                         <h5 class="card-title">Raporlama</h5>
-                        <div class="report-filters">
-                            <form method="post" accept-charset="UTF-8">
-                                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                <div class="row mb-3">
-                                    <div class="col-md-3">
-                                        <label for="start_date" class="form-label">Başlangıç Tarihi</label>
-                                        <input type="date" class="form-control" id="start_date" name="start_date" required>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="end_date" class="form-label">Bitiş Tarihi</label>
-                                        <input type="date" class="form-control" id="end_date" name="end_date" required>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="status_filter" class="form-label">Durum Filtresi</label>
-                                        <?php // YENİ: Dinamik Durum Filtresi ?>
-                                        <select class="form-select" id="status_filter" name="status_filter">
-                                            <option value="">Tümü</option>
-                                            <?php foreach ($all_event_statuses as $key => $status): ?>
-                                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label for="payment_filter" class="form-label">Ödeme Filtresi</label>
-                                        <?php // YENİ: Dinamik Ödeme Filtresi ?>
-                                        <select class="form-select" id="payment_filter" name="payment_filter">
-                                            <option value="">Tümü</option>
-                                            <?php foreach ($all_payment_statuses as $key => $status): ?>
-                                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Birim Filtresi</label>
-                                    <div class="unit-checkboxes">
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" id="all_units" value="all" name="unit_ids[]" checked>
-                                            <label class="form-check-label" for="all_units"><strong>Tüm Birimler</strong></label>
-                                        </div>
-                                        <?php
-                                        try {
-                                            $sql = "SELECT * FROM units WHERE is_active = TRUE ORDER BY unit_name";
-                                            $stmt = $pdo->prepare($sql);
-                                            $stmt->execute();
-                                            $units = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                            foreach ($units as $unit):
-                                        ?>
-                                                <div class="form-check">
-                                                    <input class="form-check-input unit-checkbox" type="checkbox" id="unit_<?php echo $unit['id']; ?>" name="unit_ids[]" value="<?php echo $unit['id']; ?>" checked>
-                                                    <label class="form-check-label" for="unit_<?php echo $unit['id']; ?>"><?php echo htmlspecialchars($unit['unit_name']); ?></label>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        <?php } catch(PDOException $e) { ?>
-                                            <p>Birimler yüklenemedi.</p>
-                                        <?php } ?>
-                                    </div>
-                                </div>
-                                <button type="submit" name="generate_report" value="generate" class="btn btn-primary">
-                                    <i class="fas fa-chart-bar me-1"></i>Rapor Oluştur
-                                </button>
-                            </form>
-                        </div>
-                        <?php
-                        if (isset($_SESSION['report_data'])) {
-                            $report_data = $_SESSION['report_data'];
-                            $filters = $_SESSION['report_filters'];
-                            unset($_SESSION['report_data']);
-                            unset($_SESSION['report_filters']);
-                            if (!empty($report_data)) {
-                        ?>
-                                <div class="report-summary">
-                                    <h5>Rapor Özeti</h5>
-                                    <p>Toplam Etkinlik: <?php echo count($report_data); ?></p>
-                                    <p>Tarih Aralığı: <?php echo turkish_date('d M Y', strtotime($filters['start_date'])) . ' - ' . turkish_date('d M Y', strtotime($filters['end_date'])); ?></p>
-                                </div>
-                                <div class="table-responsive">
-                                    <table class="table table-hover">
-                                        <thead>
-                                            <tr>
-                                                <th>Tarih</th>
-                                                <th>Birim</th>
-                                                <th>Etkinlik Adı</th>
-                                                <th>Saat</th>
-                                                <th>İletişim</th>
-                                                <th>Durum</th>
-                                                <th>Ödeme</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($report_data as $event): ?>
-                                                <tr>
-                                                    <td><?php echo turkish_date('d M Y', strtotime($event['event_date'] ?? 'now')); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['unit_name'] ?? ''); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['event_name'] ?? ''); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['event_time'] ?? ''); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['contact_info'] ?? ''); ?></td>
-                                                    <td>
-                                                        <?php // YENİ: Dinamik Rapor Durumları
-                                                            $event_status = $event['status'] ?? '';
-                                                            $status_data = $all_event_statuses[$event_status] ?? null;
-                                                            if ($status_data):
-                                                        ?>
-                                                            <span class="badge badge-status-<?php echo $event_status; ?>"><?php echo htmlspecialchars($status_data['display_name']); ?></span>
-                                                        <?php endif; ?>
-                                                    </td>
-                                                    <td>
-                                                        <?php 
-                                                        $event_payment_status = $event['payment_status'] ?? '';
-                                                        $payment_data = $all_payment_statuses[$event_payment_status] ?? null;
-                                                        if ($event_status !== 'free' && $event_status !== 'cancelled' && $payment_data):
-                                                        ?>
-                                                            <span class="badge badge-payment-<?php echo $event_payment_status; ?>"><?php echo htmlspecialchars($payment_data['display_name']); ?></span>
-                                                        <?php else: ?>
-                                                            <span class="text-muted">-</span>
-                                                        <?php endif; ?>
-                                                    </td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div class="export-buttons">
-                                    <h5>Raporu İndir</h5>
-                                    <div class="d-flex gap-2">
-                                        <form method="post" accept-charset="UTF-8">
-                                            <input type="hidden" name="start_date" value="<?php echo htmlspecialchars($filters['start_date']); ?>">
-                                            <input type="hidden" name="end_date" value="<?php echo htmlspecialchars($filters['end_date']); ?>">
-                                            <?php foreach ($filters['unit_ids'] as $unit_id): ?>
-                                                <input type="hidden" name="unit_ids[]" value="<?php echo htmlspecialchars($unit_id); ?>">
-                                            <?php endforeach; ?>
-                                            <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($filters['status_filter']); ?>">
-                                            <input type="hidden" name="payment_filter" value="<?php echo htmlspecialchars($filters['payment_filter']); ?>">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                            <button type="submit" name="generate_report" value="txt" class="btn btn-info">
-                                                <i class="fas fa-file-alt me-1"></i>TXT Olarak İndir
-                                            </button>
-                                        </form>
-                                        <form method="post" accept-charset="UTF-8">
-                                            <input type="hidden" name="start_date" value="<?php echo htmlspecialchars($filters['start_date']); ?>">
-                                            <input type="hidden" name="end_date" value="<?php echo htmlspecialchars($filters['end_date']); ?>">
-                                            <?php foreach ($filters['unit_ids'] as $unit_id): ?>
-                                                <input type="hidden" name="unit_ids[]" value="<?php echo htmlspecialchars($unit_id); ?>">
-                                            <?php endforeach; ?>
-                                            <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($filters['status_filter']); ?>">
-                                            <input type="hidden" name="payment_filter" value="<?php echo htmlspecialchars($filters['payment_filter']); ?>">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                            <button type="submit" name="generate_report" value="doc" class="btn btn-success">
-                                                <i class="fas fa-file-word me-1"></i>DOC Olarak İndir
-                                            </button>
-                                        </form>
-                                        <form method="post" accept-charset="UTF-8">
-                                            <input type="hidden" name="start_date" value="<?php echo htmlspecialchars($filters['start_date']); ?>">
-                                            <input type="hidden" name="end_date" value="<?php echo htmlspecialchars($filters['end_date']); ?>">
-                                            <?php foreach ($filters['unit_ids'] as $unit_id): ?>
-                                                <input type="hidden" name="unit_ids[]" value="<?php echo htmlspecialchars($unit_id); ?>">
-                                            <?php endforeach; ?>
-                                            <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($filters['status_filter']); ?>">
-                                            <input type="hidden" name="payment_filter" value="<?php echo htmlspecialchars($filters['payment_filter']); ?>">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                            <button type="submit" name="generate_report" value="xls" class="btn btn-warning">
-                                                <i class="fas fa-file-excel me-1"></i>XLS Olarak İndir
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
-                                <?php
-                            } else {
-                                echo '<div class="alert alert-info mt-3">Seçilen kriterlere uygun etkinlik bulunamadı.</div>';
-                            }
-                        }
-                        ?>
-                    <?php elseif ($tab === 'users'): ?>
-                        <h5 class="card-title">Kullanıcı Yönetimi</h5>
-                        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#adminUserModal" onclick="newAdminUser()">
-                            <i class="fas fa-user-plus me-1"></i>Yeni Kullanıcı Ekle
-                        </button>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
                                         <th>Kullanıcı Adı</th>
                                         <th>Tam Ad</th>
                                         <th>E-posta</th>
                                         <th>Aktif</th>
-                                        <th>Oluşturulma Tarihi</th>
-                                        <th class="actions">İşlemler</th>
+                                        <th>Oluşturulma</th>
+                                        <th>İşlemler</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php
-                                    try {
-                                        $sql = "SELECT * FROM admin_users ORDER BY username";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($users as $user):
-                                    ?>
-                                            <tr>
-                                                <td><?php echo $user['id']; ?></td>
-                                                <td><?php echo htmlspecialchars($user['username']); ?></td>
-                                                <td><?php echo htmlspecialchars($user['full_name']); ?></td>
-                                                <td><?php echo htmlspecialchars($user['email']); ?></td>
-                                                <td><?php echo $user['is_active'] ? 'Evet' : 'Hayır'; ?></td>
-                                                <td><?php echo turkish_date('d M Y H:i', strtotime($user['created_at'])); ?></td>
-                                                <td class="actions">
-                                                    <div class="action-buttons d-flex justify-content-center">
-                                                        <button class="btn btn-sm btn-primary edit-user" data-bs-toggle="modal" data-bs-target="#adminUserModal"
-                                                                data-user-id="<?php echo $user['id']; ?>"
-                                                                data-username="<?php echo htmlspecialchars($user['username']); ?>"
-                                                                data-full-name="<?php echo htmlspecialchars($user['full_name']); ?>"
-                                                                data-email="<?php echo htmlspecialchars($user['email']); ?>"
-                                                                data-user-active="<?php echo $user['is_active']; ?>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <form method="post" class="d-inline" onsubmit="return confirm('Bu kullanıcıyı silmek istediğinize emin misiniz?');">
-                                                            <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                                                            <button type="submit" name="delete_admin_user" class="btn btn-sm btn-danger">
-                                                                <i class="fas fa-trash"></i>
-                                                            </button>
-                                                        </form>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php } catch(PDOException $e) { ?>
-                                        <tr><td colspan="7">Kullanıcılar getirilirken hata oluştu.</td></tr>
-                                    <?php } ?>
+                                    <?php foreach($admin_users as $user): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($user['username']); ?></td>
+                                        <td><?php echo htmlspecialchars($user['full_name'] ?: '-'); ?></td>
+                                        <td><?php echo htmlspecialchars($user['email'] ?: '-'); ?></td>
+                                        <td><?php echo $user['is_active'] ? 'Evet' : 'Hayır'; ?></td>
+                                        <td><?php echo turkish_date('d M Y', strtotime($user['created_at'])); ?></td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary" 
+                                                    onclick='editAdminUser(<?php echo json_encode($user); ?>)'>Düzenle</button>
+                                            <form method="post" class="d-inline" onsubmit="return confirm('Bu yöneticiyi silmek istediğinize emin misiniz?');">
+                                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                                <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
+                                                <button name="delete_admin_user" class="btn btn-sm btn-outline-danger" 
+                                                        <?php echo ($user['id'] === ($_SESSION['admin_user']['id'] ?? 0)) ? 'disabled' : ''; ?>>Sil</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
                                 </tbody>
                             </table>
                         </div>
-                    <?php // YENİ: AYARLAR SEKMESİ ?>
-                    <?php elseif ($tab === 'settings'): ?>
-                        <h5 class="card-title">Genel Ayarlar</h5>
-                        <p>Buradan etkinlik durumları ve ödeme durumları için görüntülenen adları ve renkleri düzenleyebilirsiniz. <strong>Not:</strong> Anahtarlar (örn: 'confirmed') sistem için gereklidir ve değiştirilemez.</p>
-                        
-                        <form method="post" accept-charset="UTF-8">
-                            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                            
-                            <h6>Etkinlik Durumları</h6>
-                            <div class="table-responsive mb-4">
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Anahtar (Değişmez)</th>
-                                            <th>Görünen Ad</th>
-                                            <th>Renk</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($all_event_statuses as $key => $status): ?>
-                                        <tr>
-                                            <td><strong><?php echo $key; ?></strong></td>
-                                            <td>
-                                                <input type="text" class="form-control" 
-                                                       name="event_status[<?php echo $key; ?>][display_name]" 
-                                                       value="<?php echo htmlspecialchars($status['display_name']); ?>" required>
-                                            </td>
-                                            <td>
-                                                <input type="color" class="form-control form-control-color" 
-                                                       name="event_status[<?php echo $key; ?>][color]" 
-                                                       value="<?php echo htmlspecialchars($status['color']); ?>" required>
-                                            </td>
-                                        </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            </div>
 
-                            <h6>Ödeme Durumları</h6>
-                            <div class="table-responsive mb-4">
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Anahtar (Değişmez)</th>
-                                            <th>Görünen Ad</th>
-                                            <th>Renk</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($all_payment_statuses as $key => $status): ?>
-                                        <tr>
-                                            <td><strong><?php echo $key; ?></strong></td>
-                                            <td>
-                                                <input type="text" class="form-control" 
-                                                       name="payment_status[<?php echo $key; ?>][display_name]" 
-                                                       value="<?php echo htmlspecialchars($status['display_name']); ?>" required>
-                                            </td>
-                                            <td>
-                                                <input type="color" class="form-control form-control-color" 
-                                                       name="payment_status[<?php echo $key; ?>][color]" 
-                                                       value="<?php echo htmlspecialchars($status['color']); ?>" required>
-                                            </td>
-                                        </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                    <?php elseif($tab == 'sectors'): ?>
+                        <?php 
+                            $all_sectors = [];
+                            try {
+                                $all_sectors = $pdo->query("SELECT * FROM app_sectors ORDER BY sector_name")->fetchAll();
+                            } catch (PDOException $e) {
+                                echo '<div class="alert alert-danger">Sektör tablosu bulunamadı. Lütfen SQL Adım 1\'deki sorguyu çalıştırın.</div>';
+                            }
+                        ?>
+                        <div class="d-flex justify-content-between mb-3">
+                            <h4>Sektör Yönetimi</h4>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#sectorModal" onclick="newSector()">Yeni Sektör Ekle</button>
+                        </div>
+                        <?php if (!empty($all_sectors)): ?>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead><tr>
+                                    <th>Anahtar</th><th>Ad</th><th>Birim Etiketi</th><th>Etkinlik Etiketi</th><th>Durum</th><th>İşlem</th>
+                                </tr></thead>
+                                <tbody>
+                                    <?php foreach($all_sectors as $s): ?>
+                                    <tr>
+                                        <td><strong><?php echo htmlspecialchars($s['sector_key']); ?></strong></td>
+                                        <td><?php echo htmlspecialchars($s['sector_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($s['unit_label']); ?></td>
+                                        <td><?php echo htmlspecialchars($s['event_label']); ?></td>
+                                        <td><?php echo $s['is_active'] ? 'Aktif' : 'Pasif'; ?></td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary" onclick='editSector(<?php echo json_encode($s); ?>)'>Düzenle</button>
+                                            <form method="post" class="d-inline" onsubmit="return confirm('Bu sektörü silmek istediğinize emin misiniz? Anahtar: <?php echo $s['sector_key']; ?>');">
+                                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                                <input type="hidden" name="sector_key" value="<?php echo $s['sector_key']; ?>">
+                                                <button name="delete_sector" class="btn btn-sm btn-outline-danger" <?php echo ($s['sector_key'] == $active_sector) ? 'disabled' : ''; ?>>Sil</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php endif; ?>
+                    
+                    <?php elseif($tab == 'units'): ?>
+                        <div class="d-flex justify-content-between mb-3">
+                            <h4><?php echo $lang['unit_label']; ?> Listesi</h4>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#unitModal" onclick="newUnit()">Yeni <?php echo $lang['unit_label']; ?> Ekle</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead><tr><th>Ad</th><th>Renk</th><th>Durum</th><th>İşlem</th></tr></thead>
+                                <tbody>
+                                    <?php 
+                                    $all_units = $pdo->query("SELECT * FROM units ORDER BY unit_name")->fetchAll();
+                                    foreach($all_units as $u): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($u['unit_name']); ?></td>
+                                        <td><span class="badge" style="background-color:<?php echo $u['color']; ?>"><?php echo $u['color']; ?></span></td>
+                                        <td><?php echo $u['is_active']?'Aktif':'Pasif'; ?></td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary" onclick='editUnit(<?php echo json_encode($u); ?>)'>Düzenle</button>
+                                            <form method="post" class="d-inline" onsubmit="return confirm('Bu kaydı silmek tüm ilgili etkinlikleri etkileyecektir. Emin misiniz?')">
+                                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                                <input type="hidden" name="table" value="units">
+                                                <input type="hidden" name="id" value="<?php echo $u['id']; ?>">
+                                                <button name="delete_item" class="btn btn-sm btn-outline-danger">Sil</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php elseif($tab == 'events'): ?>
+                        <h4>Raporlama ve Etkinlik Yönetimi</h4>
+                        <p>Belirlenen tarihler arasındaki rezervasyonları filtreleyin ve raporları indirin veya sayfada görüntüleyin.</p>
+
+                        <div class="card p-3 mb-4 bg-light">
+                            <form method="post" onsubmit="return validateReportDates(this)" id="reportForm">
+                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                <div class="row g-3">
+                                    <div class="col-md-3">
+                                        <label for="start_date" class="form-label">Başlangıç Tarihi</label>
+                                        <input type="date" class="form-control" id="start_date_report" name="start_date" required value="<?php echo date('Y-m-01'); ?>">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="end_date" class="form-label">Bitiş Tarihi</label>
+                                        <input type="date" class="form-control" id="end_date_report" name="end_date" required value="<?php echo date('Y-m-t'); ?>">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="unit_id_filter" class="form-label"><?php echo $lang['unit_label']; ?></label>
+                                        <select class="form-select" id="unit_id_filter" name="unit_id_filter">
+                                            <option value="">Tümü</option>
+                                            <?php foreach($units as $u): ?>
+                                                <option value="<?php echo $u['id']; ?>"><?php echo htmlspecialchars($u['unit_name']); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="status_filter" class="form-label">Durum</label>
+                                        <select class="form-select" id="status_filter" name="status_filter">
+                                            <option value="">Tümü</option>
+                                            <?php foreach($all_event_statuses as $key => $st): ?>
+                                                <option value="<?php echo $key; ?>"><?php echo $st['display_name']; ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="payment_filter" class="form-label">Ödeme</label>
+                                        <select class="form-select" id="payment_filter" name="payment_filter">
+                                            <option value="">Tümü</option>
+                                            <?php foreach($all_payment_statuses as $key => $st): ?>
+                                                <option value="<?php echo $key; ?>"><?php echo $st['display_name']; ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-9 d-flex align-items-end gap-2">
+                                        <button type="submit" name="generate_report" value="view" class="btn btn-primary flex-fill">
+                                            <i class="fas fa-eye me-1"></i> Sayfada Görüntüle
+                                        </button>
+                                        <button type="submit" name="generate_report" value="xls" class="btn btn-success">
+                                            <i class="fas fa-file-excel me-1"></i> XLS İndir
+                                        </button>
+                                        <button type="submit" name="generate_report" value="doc" class="btn btn-info">
+                                            <i class="fas fa-file-word me-1"></i> DOC İndir
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                        
+                        <?php if (isset($_SESSION['report_data'])): 
+                            $report_data = $_SESSION['report_data'];
+                            $report_params = $_SESSION['report_params'];
+                            unset($_SESSION['report_data']);
+                            unset($_SESSION['report_params']);
+                        ?>
+                            <div class="report-view mt-4">
+                                <h5><?php echo htmlspecialchars($report_params['title']); ?></h5>
+                                <div class="report-summary">
+                                    <p><strong>Tarih Aralığı:</strong> <?php echo htmlspecialchars($report_params['date_range']); ?></p>
+                                    <p><strong>Filtreler:</strong> <?php echo htmlspecialchars($report_params['filters']); ?></p>
+                                    <p><strong>Toplam Kayıt:</strong> <?php echo count($report_data); ?></p>
+                                </div>
+                                
+                                <?php if (empty($report_data)): ?>
+                                    <div class="alert alert-info">Belirtilen kriterlere uygun kayıt bulunamadı.</div>
+                                <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table table-bordered table-striped report-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Tarih</th>
+                                                    <th>Gün</th>
+                                                    <th><?php echo $lang['unit_label']; ?></th>
+                                                    <th><?php echo $lang['event_label']; ?></th>
+                                                    <th>Saat</th>
+                                                    <th>İletişim</th>
+                                                    <th>Durum</th>
+                                                    <th>Ödeme</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($report_data as $event): 
+                                                    $is_weekend = date('N', strtotime($event['event_date'])) >= 6;
+                                                    $is_holiday_data = is_holiday($event['event_date'], $pdo);
+                                                    $row_class = '';
+                                                    if ($is_holiday_data) $row_class = 'bg-warning-subtle'; // Tatilse hafif sarı
+                                                    elseif ($is_weekend) $row_class = 'bg-secondary-subtle'; // Hafta sonu ise hafif gri
+                                                ?>
+                                                    <tr class="<?php echo $row_class; ?>">
+                                                        <td><?php echo turkish_date('d M Y', strtotime($event['event_date'])); ?></td>
+                                                        <td><?php echo turkish_date('l', strtotime($event['event_date'])); ?></td>
+                                                        <td><?php echo htmlspecialchars($event['unit_name']); ?></td>
+                                                        <td><?php echo htmlspecialchars($event['event_name']); ?></td>
+                                                        <td><?php echo htmlspecialchars($event['event_time']); ?></td>
+                                                        <td><?php echo htmlspecialchars($event['contact_info']); ?></td>
+                                                        <td><span class="badge badge-status-<?php echo $event['status']; ?>"><?php echo $all_event_statuses[$event['status']]['display_name']; ?></span></td>
+                                                        <td>
+                                                            <?php 
+                                                                $p_status = $event['payment_status'];
+                                                                if ($p_status) {
+                                                                    echo '<span class="badge badge-payment-' . $p_status . '">' . $all_payment_statuses[$p_status]['display_name'] . '</span>';
+                                                                } else {
+                                                                    echo '-';
+                                                                }
+                                                            ?>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <?php endif; ?>
                             </div>
-                            
-                            <button type="submit" name="save_status_settings" class="btn btn-primary">Ayarları Kaydet</button>
-                        </form>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </div>
             </div>
         </div>
-    <?php
-    }    ?>
+    <?php endif; ?>
+</div>
 
-    <div class="modal fade" id="eventModal" tabindex="-1" aria-labelledby="eventModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="eventModalLabel"><?php echo htmlspecialchars($sector_meta['new_title']); ?> Kaydı</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="modal fade" id="sectorModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <form method="post" class="modal-content">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="sector_key" id="sector_key">
+            <div class="modal-header"><h5 class="modal-title" id="sectorModalLabel">Sektör Ekle/Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+             <div class="modal-body">
+                <div class="alert alert-info" id="sectorAlert">Sektör anahtarı (Key), küçük harf ve alt çizgi içermelidir ve kaydedildikten sonra değiştirilemez.</div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Sektör Anahtarı (Key)</label>
+                        <input type="text" name="new_sector_key" id="new_sector_key" class="form-control" placeholder="orn_sektor_adi" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Sektör Adı</label>
+                        <input type="text" name="sector_name" id="sector_name" class="form-control" required>
+                    </div>
                 </div>
-                <form method="post" id="eventForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="event_id" id="event_id">
-                        <input type="hidden" name="source_page" value="<?php echo $page; ?>">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <label for="sektor_id" class="form-label">Sektör</label>
-                                <select class="form-select" id="sektor_id" name="sektor_id" required>
-                                    <?php foreach ($all_sectors as $sid => $sector): ?>
-                                        <option value="<?php echo $sid; ?>" <?php echo ($selected_sector_id === $sid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sector['ad']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="unit_id" class="form-label">Birim</label>
-                                <select class="form-select" id="unit_id" name="unit_id" required>
-                                    <option value="">Birim Seçin</option>
-                                    <?php
-                                    try {
-                                        $sql = "SELECT * FROM units WHERE is_active = TRUE ORDER BY unit_name";
-                                        $stmt = $pdo->prepare($sql);
-                                        $stmt->execute();
-                                        $units = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                                        foreach ($units as $unit) {
-                                            echo '<option value="' . $unit['id'] . '">' . htmlspecialchars($unit['unit_name']) . '</option>';
-                                        }
-                                    } catch(PDOException $e) {
-                                        echo '<option value="">Birimler yüklenemedi</option>';
-                                    }
-                                    ?>
-                                </select>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="event_date" class="form-label"><?php echo htmlspecialchars($sector_meta['date_label']); ?></label>
-                                <input type="date" class="form-control" id="event_date" name="event_date" required>
-                            </div>
-                        </div>
-                        <div id="existingEventsSection" class="mb-3" style="display: none;">
-                            <h6>Bu Tarih ve Birimdeki Mevcut Etkinlikler:</h6>
-                            <div class="existing-events" id="existingEventsList"></div>
-                            <div class="alert alert-info">
-                                <small>Yeni bir etkinlik eklemek için aşağıdaki formu doldurun.</small>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="event_name" class="form-label"><?php echo htmlspecialchars($sector_meta['name_label']); ?></label>
-                                <input type="text" class="form-control" id="event_name" name="event_name" required>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="event_time" class="form-label"><?php echo htmlspecialchars($sector_meta['time_label']); ?></label>
-                                <input type="text" class="form-control" id="event_time" name="event_time" placeholder="Örn: 14:00-16:00" required>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="event_contact" class="form-label"><?php echo htmlspecialchars($sector_meta['contact_label']); ?></label>
-                            <input type="text" class="form-control" id="event_contact" name="event_contact" placeholder="İsteğe bağlı">
-                        </div>
-                        <div class="mb-3">
-                            <label for="event_notes" class="form-label"><?php echo htmlspecialchars($sector_meta['notes_label']); ?></label>
-                            <textarea class="form-control" id="event_notes" name="event_notes" rows="3"></textarea>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="event_status" class="form-label">Durum</label>
-                                <?php // YENİ: Dinamik Durum Dropdown ?>
-                                <select class="form-select" id="event_status" name="event_status" required>
-                                    <?php foreach ($all_event_statuses as $key => $status): ?>
-                                        <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3 payment-status-container" id="payment_status_container">
-                                    <label for="payment_status" class="form-label">Ödeme Durumu</label>
-                                    <?php // YENİ: Dinamik Ödeme Dropdown ?>
-                                    <select class="form-select" id="payment_status" name="payment_status">
-                                        <option value="">Seçiniz</option>
-                                        <?php foreach ($all_payment_statuses as $key => $status): ?>
-                                            <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($status['display_name']); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
+                <h6>Etiket Tanımları</h6>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Kaynak/Birim Etiketi</label>
+                        <input type="text" name="unit_label" id="unit_label" class="form-control" placeholder="Örn: Araç / Avukat" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Etkinlik Etiketi</label>
+                        <input type="text" name="event_label" id="event_label" class="form-control" placeholder="Örn: Kiralama / Seans" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">İletişim Etiketi</label>
+                        <input type="text" name="contact_label" id="contact_label" class="form-control" placeholder="Örn: Müşteri / Danışan" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Zaman Etiketi</label>
+                        <input type="text" name="time_label" id="time_label" class="form-control" placeholder="Örn: Saat / Dönüş Saati" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">İkon Sınıfı (Font Awesome)</label>
+                        <input type="text" name="icon" id="icon" class="form-control" placeholder="Örn: fa-car, fa-gavel" required>
+                    </div>
+                    <div class="col-md-4 mb-3 d-flex align-items-end">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="is_active" id="sector_is_active" value="1" checked>
+                            <label class="form-check-label">Aktif (Görünsün)</label>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_event" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
+                </div>
             </div>
-        </div>
+             <div class="modal-footer"><button type="submit" name="save_sector" class="btn btn-primary">Kaydet</button></div>
+        </form>
     </div>
+</div>
 
-    <div class="modal fade" id="sectorModal" tabindex="-1" aria-labelledby="sectorModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="sectorModalLabel">Sektör Ekle/Düzenle</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" id="sectorForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="sector_id" id="sector_id">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="sector_ad" class="form-label">Sektör Adı</label>
-                            <input type="text" class="form-control" id="sector_ad" name="sector_ad" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="sector_aciklama" class="form-label">Açıklama</label>
-                            <textarea class="form-control" id="sector_aciklama" name="sector_aciklama" rows="3"></textarea>
-                        </div>
-                        <div class="mb-3 form-check">
-                            <input class="form-check-input" type="checkbox" id="sector_aktif" name="sector_aktif" value="1" checked>
-                            <label class="form-check-label" for="sector_aktif">Aktif</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_sector" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
 
-    <div class="modal fade" id="unitModal" tabindex="-1" aria-labelledby="unitModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="unitModalLabel">Birim Ekle/Düzenle</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="modal fade" id="adminUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="user_id" id="user_id">
+            <div class="modal-header"><h5 class="modal-title" id="adminUserModalLabel">Yönetici Ekle/Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Kullanıcı Adı</label>
+                    <input type="text" name="username" id="username" class="form-control" required>
                 </div>
-                <form method="post" id="unitForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="unit_id" id="modal_unit_id">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="unit_name" class="form-label">Birim Adı</label>
-                            <input type="text" class="form-control" id="unit_name" name="unit_name" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="unit_color" class="form-label">Renk</label>
-                            <input type="color" class="form-control form-control-color" id="unit_color" name="unit_color" value="#3498db" title="Birim rengini seçin">
-                        </div>
-                        <div class="mb-3 form-check">
-                            <input class="form-check-input" type="checkbox" id="unit_active" name="unit_active" value="1" checked>
-                            <label class="form-check-label" for="unit_active">Aktif</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_unit" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
+                <div class="mb-3">
+                    <label class="form-label">Şifre (Değiştirmek istemiyorsanız boş bırakın)</label>
+                    <input type="password" name="password" id="password" class="form-control">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Tam Ad</label>
+                    <input type="text" name="full_name" id="full_name" class="form-control">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">E-posta</label>
+                    <input type="email" name="email" id="email" class="form-control">
+                </div>
+                <div class="mb-3 form-check">
+                    <input class="form-check-input" type="checkbox" name="is_active" id="user_is_active" value="1" checked>
+                    <label class="form-check-label">Aktif Hesap</label>
+                </div>
             </div>
-        </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                <button type="submit" name="save_admin_user" class="btn btn-primary">Kaydet</button>
+            </div>
+        </form>
     </div>
+</div>
 
-    <div class="modal fade" id="holidayModal" tabindex="-1" aria-labelledby="holidayModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="holidayModalLabel">Tatil Ekle/Düzenle</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" id="holidayForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="holiday_id" id="holiday_id">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="holiday_name" class="form-label">Tatil Adı</label>
-                            <input type="text" class="form-control" id="holiday_name" name="holiday_name" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="holiday_date" class="form-label">Tarih</label>
-                            <input type="date" class="form-control" id="holiday_date" name="holiday_date" required>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_holiday" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
+
+<div class="modal fade" id="loginModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Admin Girişi</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                <div class="mb-3"><label>Kullanıcı Adı</label><input type="text" name="username" class="form-control" required></div>
+                <div class="mb-3"><label>Şifre</label><input type="password" name="password" class="form-control" required></div>
             </div>
-        </div>
+            <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button><button type="submit" name="admin_login" class="btn btn-primary">Giriş Yap</button></div>
+        </form>
     </div>
+</div>
+
+<div class="modal fade" id="eventModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content" id="eventForm">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="event_id" id="event_id">
+            <input type="hidden" name="source_page" value="<?php echo $page; ?>">
+            <div class="modal-header">
+                <h5 class="modal-title">Kayıt Ekle/Düzenle</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label"><?php echo $lang['unit_label']; ?></label>
+                    <select name="unit_id" id="modal_unit_id" class="form-select" required>
+                        <?php foreach($units as $u): ?>
+                            <option value="<?php echo $u['id']; ?>"><?php echo htmlspecialchars($u['unit_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="row">
+                    <div class="col-6 mb-3">
+                        <label class="form-label">Tarih</label>
+                        <input type="date" name="event_date" id="event_date" class="form-control" required>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <label class="form-label"><?php echo $lang['time_label']; ?></label>
+                        <input type="text" name="event_time" id="event_time" class="form-control" placeholder="Örn: 14:00-15:00" required>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label"><?php echo $lang['event_label']; ?></label>
+                    <input type="text" name="event_name" id="event_name" class="form-control" placeholder="<?php echo $lang['event_placeholder']; ?>" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label"><?php echo $lang['contact_label']; ?></label>
+                    <input type="text" name="event_contact" id="event_contact" class="form-control">
+                </div>
+                <div class="row">
+                    <div class="col-6 mb-3">
+                        <label class="form-label">Durum</label>
+                        <select name="event_status" id="event_status" class="form-select">
+                            <?php foreach($all_event_statuses as $key=>$st): ?>
+                                <option value="<?php echo $key; ?>"><?php echo $st['display_name']; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <label class="form-label">Ödeme</label>
+                        <select name="payment_status" id="payment_status" class="form-select">
+                            <option value="">Seçiniz</option>
+                            <?php foreach($all_payment_statuses as $key=>$st): ?>
+                                <option value="<?php echo $key; ?>"><?php echo $st['display_name']; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Notlar</label>
+                    <textarea name="event_notes" id="event_notes" class="form-control"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <button type="button" class="btn btn-danger" id="btnDeleteEvent" style="display:none;" onclick="deleteEvent()">Sil</button>
+                <div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                    <button type="submit" name="save_event" class="btn btn-primary">Kaydet</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal fade" id="unitModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="unit_id" id="form_unit_id">
+             <div class="modal-header"><h5 class="modal-title"><?php echo $lang['unit_label']; ?> Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+             <div class="modal-body">
+                 <div class="mb-3"><label>Ad</label><input type="text" name="unit_name" id="form_unit_name" class="form-control" placeholder="<?php echo $lang['unit_placeholder']; ?>" required></div>
+                 <div class="mb-3"><label>Renk</label><input type="color" name="unit_color" id="form_unit_color" class="form-control form-control-color"></div>
+                 <div class="mb-3 form-check"><input type="checkbox" name="unit_active" id="form_unit_active" class="form-check-input" checked><label class="form-check-label">Aktif (Takvimde Görünsün)</label></div>
+             </div>
+             <div class="modal-footer"><button type="submit" name="save_unit" class="btn btn-primary">Kaydet</button></div>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
+    const unitModal = new bootstrap.Modal(document.getElementById('unitModal'));
+    const sectorModal = new bootstrap.Modal(document.getElementById('sectorModal'));
+    const adminUserModal = new bootstrap.Modal(document.getElementById('adminUserModal'));
+    const currentUnitId = '<?php echo $selected_unit; ?>';
     
-    <?php // YENİ: Duyuru Modalı ?>
-    <div class="modal fade" id="announcementModal" tabindex="-1" aria-labelledby="announcementModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="announcementModalLabel">Duyuru Ekle/Düzenle</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" id="announcementForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="announcement_id" id="announcement_id">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="content" class="form-label">Duyuru İçeriği</label>
-                            <textarea class="form-control" id="content" name="content" rows="4" required></textarea>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="start_date_modal" class="form-label">Başlangıç (İsteğe Bağlı)</label>
-                                <input type="datetime-local" class="form-control" id="start_date_modal" name="start_date">
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="end_date_modal" class="form-label">Bitiş (İsteğe Bağlı)</label>
-                                <input type="datetime-local" class="form-control" id="end_date_modal" name="end_date">
-                            </div>
-                        </div>
-                        <div class="mb-3 form-check">
-                            <input class="form-check-input" type="checkbox" id="show_author" name="show_author" value="1">
-                            <label class="form-check-label" for="show_author">Yazarın adını ana sayfada göster</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_announcement" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+    // Global form oluşturucu
+    const deleteFormHtml = `
+        <form method="post" id="deleteItemForm" style="display:none;">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="table" id="delete_table_input">
+            <input type="hidden" name="id" id="delete_id_input">
+            <input type="hidden" name="delete_item" value="1">
+        </form>
+    `;
+    document.body.insertAdjacentHTML('beforeend', deleteFormHtml);
 
-    <div class="modal fade" id="adminUserModal" tabindex="-1" aria-labelledby="adminUserModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="adminUserModalLabel">Kullanıcı Ekle/Düzenle</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" id="adminUserForm" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <input type="hidden" name="user_id" id="user_id">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="username" class="form-label">Kullanıcı Adı</label>
-                            <input type="text" class="form-control" id="username" name="username" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="password" class="form-label">Şifre (Değiştirmek istemiyorsanız boş bırakın)</label>
-                            <input type="password" class="form-control" id="password" name="password">
-                        </div>
-                        <div class="mb-3">
-                            <label for="full_name" class="form-label">Tam Ad</label>
-                            <input type="text" class="form-control" id="full_name" name="full_name">
-                        </div>
-                        <div class="mb-3">
-                            <label for="email" class="form-label">E-posta</label>
-                            <input type="email" class="form-control" id="email" name="email">
-                        </div>
-                        <div class="mb-3 form-check">
-                            <input class="form-check-input" type="checkbox" id="user_active" name="user_active" value="1" checked>
-                            <label class="form-check-label" for="user_active">Aktif</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="save_admin_user" class="btn btn-primary">Kaydet</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+    function newEvent() {
+        document.getElementById('eventForm').reset();
+        document.getElementById('event_id').value = '';
+        document.getElementById('modal_unit_id').value = currentUnitId;
+        document.getElementById('event_date').value = new Date().toISOString().split('T')[0];
+        document.getElementById('event_status').value = 'pending';
+        document.getElementById('payment_status').value = 'unpaid';
+        document.getElementById('btnDeleteEvent').style.display = 'none';
+        eventModal.show();
+    }
 
-    <div class="modal fade" id="loginModal" tabindex="-1" aria-labelledby="loginModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="loginModalLabel">Yönetici Girişi</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="post" accept-charset="UTF-8">
-                    <div class="modal-body">
-                        <?php if (isset($login_error)): ?>
-                            <div class="alert alert-danger"><?php echo $login_error; ?></div>
-                        <?php endif; ?>
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <div class="mb-3">
-                            <label for="login_username" class="form-label">Kullanıcı Adı</label>
-                            <input type="text" class="form-control" id="login_username" name="username" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="login_password" class="form-label">Şifre</label>
-                            <input type="password" class="form-control" id="login_password" name="password" required>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                        <button type="submit" name="admin_login" class="btn btn-primary">Giriş Yap</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+    function newEventForDay(date) {
+        newEvent();
+        document.getElementById('event_date').value = date;
+    }
 
-    <footer class="mt-5">
-        <div class="container text-center">
-            <p class="mb-0">© <?php echo date('Y'); ?> Küçük İşletmeler Ajanda & Rezervasyon Paneli - Tüm hakları saklıdır.</p>
-            <p class="mb-0" style="font-size: 0.85rem;">Coded by İlhan Akdeniz</p>
-        </div>
-    </footer>
+    function editEvent(evt) {
+        if(!<?php echo is_admin()?'true':'false'; ?>) return;
+        document.getElementById('event_id').value = evt.id;
+        document.getElementById('modal_unit_id').value = evt.unit_id;
+        document.getElementById('event_date').value = evt.event_date;
+        document.getElementById('event_time').value = evt.event_time;
+        document.getElementById('event_name').value = evt.event_name;
+        document.getElementById('event_contact').value = evt.contact_info;
+        document.getElementById('event_notes').value = evt.notes;
+        document.getElementById('event_status').value = evt.status;
+        document.getElementById('payment_status').value = evt.payment_status || '';
+        document.getElementById('btnDeleteEvent').style.display = 'block';
+        eventModal.show();
+    }
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // YENİ: PHP'den dinamik durum haritalarını JS'e aktar
-        const allEventStatuses = <?php echo json_encode($all_event_statuses); ?>;
-        const allPaymentStatuses = <?php echo json_encode($all_payment_statuses); ?>;
-
-        document.addEventListener('DOMContentLoaded', function() {
-            const eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
-            const unitModal = new bootstrap.Modal(document.getElementById('unitModal'));
-            const holidayModal = new bootstrap.Modal(document.getElementById('holidayModal'));
-            const adminUserModal = new bootstrap.Modal(document.getElementById('adminUserModal'));
-            const announcementModal = document.getElementById('announcementModal') ? new bootstrap.Modal(document.getElementById('announcementModal')) : null;
-
-            function populateEventModal(button) {
-                const form = document.getElementById('eventForm');
-                form.querySelector('#event_id').value = button.dataset.eventId || '';
-                form.querySelector('#event_date').value = button.dataset.eventDate || new Date().toISOString().split('T')[0];
-                form.querySelector('#event_name').value = button.dataset.eventName || '';
-                form.querySelector('#event_time').value = button.dataset.eventTime || '';
-                form.querySelector('#event_contact').value = button.dataset.eventContact || '';
-                form.querySelector('#event_notes').value = button.dataset.eventNotes || '';
-                form.querySelector('#event_status').value = button.dataset.eventStatus || 'option'; // 'option' varsayılan
-                form.querySelector('#sektor_id').value = button.dataset.sectorId || '<?php echo $selected_sector_id; ?>';
-                form.querySelector('#unit_id').value = button.dataset.unitId || '';
-                form.querySelector('#payment_status').value = button.dataset.eventPayment || '';
-                document.getElementById('unit_id').disabled = false;
-                togglePaymentStatus(form.querySelector('#event_status').value);
-                document.getElementById('existingEventsSection').style.display = 'none';
-                eventModal.show();
-            }
-
-            document.querySelectorAll('.btn-edit-quick, .edit-event').forEach(button => {
-                button.addEventListener('click', () => populateEventModal(button));
-            });
-
-            document.getElementById('unit_id').addEventListener('change', checkExistingEvents);
-            document.getElementById('event_date').addEventListener('change', checkExistingEvents);
-
-            function checkExistingEvents() {
-                const unitId = document.getElementById('unit_id').value;
-                const eventDate = document.getElementById('event_date').value;
-                const eventId = document.getElementById('event_id').value;
-                if (!eventId && unitId && eventDate) {
-                    fetch(`?ajax=get_events&unit_id=${unitId}&event_date=${eventDate}`)
-                        .then(response => response.json())
-                        .then(data => {
-                            const section = document.getElementById('existingEventsSection');
-                            const list = document.getElementById('existingEventsList');
-                            if (data.length > 0) {
-                                list.innerHTML = '';
-                                data.forEach(event => {
-                                    const item = document.createElement('div');
-                                    item.className = 'event-list-item';
-                                    item.innerHTML = `
-                                        <strong>${event.event_name}</strong> - ${event.event_time}
-                                        ${event.contact_info ? `<br><small>${event.contact_info}</small>` : ''}
-                                        <span class="badge ${getStatusBadgeClass(event.status)} float-end">${getStatusText(event.status)}</span>`;
-                                    list.appendChild(item);
-                                });
-                                section.style.display = 'block';
-                            } else {
-                                section.style.display = 'none';
-                            }
-                        }).catch(error => {
-                            console.error('Error:', error);
-                            document.getElementById('existingEventsSection').style.display = 'none';
-                        });
-                } else {
-                    document.getElementById('existingEventsSection').style.display = 'none';
-                }
-            }
-
-            // YENİ: Dinamik JS fonksiyonları
-            function getStatusText(status) {
-                return allEventStatuses[status] ? allEventStatuses[status].display_name : status;
-            }
-
-            function getStatusBadgeClass(status) {
-                // CSS'e .badge-status-[key] sınıflarını enjekte ettiğimiz için,
-                // sadece sınıf adını döndürmemiz yeterli.
-                return allEventStatuses[status] ? `badge-status-${status}` : 'bg-secondary';
-            }
-
-            document.getElementById('event_status').addEventListener('change', function() {
-                togglePaymentStatus(this.value);
-            });
-
-            function togglePaymentStatus(status) {
-                const container = document.getElementById('payment_status_container');
-                // Bu anahtar isimler ('free', 'cancelled') veritabanında değiştirilmediği sürece çalışır.
-                if (status === 'free' || status === 'cancelled') {
-                    container.classList.add('hidden');
-                    document.getElementById('payment_status').value = '';
-                } else {
-                    container.classList.remove('hidden');
-                }
-            }
-
-            window.newEvent = function() {
-                document.getElementById('eventForm').reset();
-                document.getElementById('event_id').value = '';
-                document.getElementById('event_date').value = new Date().toISOString().split('T')[0];
-                document.getElementById('event_status').value = 'option'; // Varsayılan durum
-                document.getElementById('sektor_id').value = '<?php echo $selected_sector_id ?: (!empty($all_sectors) ? array_key_first($all_sectors) : ''); ?>';
-                document.getElementById('unit_id').disabled = false;
-                togglePaymentStatus('option'); // Varsayılan duruma göre ayarla
-            }
-
-            window.newEventForDay = function(date, unitId) {
-                document.getElementById('eventForm').reset();
-                document.getElementById('event_id').value = '';
-                document.getElementById('event_date').value = date;
-                document.getElementById('unit_id').value = unitId;
-                document.getElementById('sektor_id').value = '<?php echo $selected_sector_id ?: (!empty($all_sectors) ? array_key_first($all_sectors) : ''); ?>';
-                document.getElementById('unit_id').disabled = false;
-                document.getElementById('event_status').value = 'option'; // Varsayılan durum
-                document.getElementById('existingEventsSection').style.display = 'block';
-                checkExistingEvents();
-                togglePaymentStatus('option'); // Varsayılan duruma göre ayarla
-            }
-
-            document.querySelectorAll('.edit-unit').forEach(button => {
-                button.addEventListener('click', function() {
-                    document.getElementById('modal_unit_id').value = this.dataset.unitId;
-                    document.getElementById('unit_name').value = this.dataset.unitName;
-                    document.getElementById('unit_color').value = this.dataset.unitColor;
-                    document.getElementById('unit_active').checked = this.dataset.unitActive === '1';
-                });
-            });
-
-            window.newUnit = function() {
-                document.getElementById('unitForm').reset();
-                document.getElementById('modal_unit_id').value = '';
-                document.getElementById('unit_active').checked = true;
-            }
-
-            document.querySelectorAll('.edit-sector').forEach(button => {
-                button.addEventListener('click', function() {
-                    document.getElementById('sector_id').value = this.dataset.sectorId;
-                    document.getElementById('sector_ad').value = this.dataset.sectorAd;
-                    document.getElementById('sector_aciklama').value = this.dataset.sectorAciklama;
-                    document.getElementById('sector_aktif').checked = this.dataset.sectorAktif === '1';
-                });
-            });
-
-            window.newSector = function() {
-                document.getElementById('sectorForm').reset();
-                document.getElementById('sector_id').value = '';
-                document.getElementById('sector_aktif').checked = true;
-            }
-
-            document.querySelectorAll('.edit-holiday').forEach(button => {
-                button.addEventListener('click', function() {
-                    document.getElementById('holiday_id').value = this.dataset.holidayId;
-                    document.getElementById('holiday_name').value = this.dataset.holidayName;
-                    document.getElementById('holiday_date').value = this.dataset.holidayDate;
-                });
-            });
-
-            window.newHoliday = function() {
-                document.getElementById('holidayForm').reset();
-                document.getElementById('holiday_id').value = '';
-                document.getElementById('holiday_date').value = new Date().toISOString().split('T')[0];
-            }
-            
-            document.querySelectorAll('.edit-user').forEach(button => {
-                button.addEventListener('click', function() {
-                    document.getElementById('user_id').value = this.dataset.userId;
-                    document.getElementById('username').value = this.dataset.username;
-                    document.getElementById('full_name').value = this.dataset.fullName;
-                    document.getElementById('email').value = this.dataset.email;
-                    document.getElementById('user_active').checked = this.dataset.userActive === '1';
-                    document.getElementById('password').value = '';
-                });
-            });
-
-            window.newAdminUser = function() {
-                document.getElementById('adminUserForm').reset();
-                document.getElementById('user_id').value = '';
-                document.getElementById('user_active').checked = true;
-            }
-
-            // YENİ: Duyuru Modalı JS
-            document.querySelectorAll('.edit-announcement').forEach(button => {
-                button.addEventListener('click', function() {
-                    document.getElementById('announcement_id').value = this.dataset.announcementId;
-                    document.getElementById('content').value = this.dataset.content;
-                    document.getElementById('show_author').checked = this.dataset.showAuthor === '1';
-                    document.getElementById('start_date_modal').value = this.dataset.startDate;
-                    document.getElementById('end_date_modal').value = this.dataset.endDate;
-                });
-            });
-
-            window.newAnnouncement = function() {
-                document.getElementById('announcementForm').reset();
-                document.getElementById('announcement_id').value = '';
-            }
-
-            // Raporlama Checkbox JS
-            const allUnitsCheckbox = document.getElementById('all_units');
-            const unitCheckboxes = document.querySelectorAll('.unit-checkbox');
-            
-            if (allUnitsCheckbox) {
-                allUnitsCheckbox.addEventListener('change', function() {
-                    unitCheckboxes.forEach(checkbox => {
-                        checkbox.checked = this.checked;
-                    });
-                });
-            }
-
-            if (unitCheckboxes && unitCheckboxes.length > 0) {
-                unitCheckboxes.forEach(checkbox => {
-                    checkbox.addEventListener('change', function() {
-                        if (!this.checked) {
-                            allUnitsCheckbox.checked = false;
-                        } else {
-                            const allChecked = Array.from(unitCheckboxes).every(cb => cb.checked);
-                            allUnitsCheckbox.checked = allChecked;
-                        }
-                    });
-                });
-            }
-
-            const startDateInput = document.getElementById('start_date');
-            const endDateInput = document.getElementById('end_date');
-            if (startDateInput && endDateInput) {
-                const today = new Date().toISOString().split('T')[0];
-                if (!startDateInput.value) startDateInput.value = today;
-                if (!endDateInput.value) endDateInput.value = today;
-            }
-        });
-        function confirmDelete(eventId, element, csrfToken) {
-            if (confirm('Bu etkinliği silmek istediğinizden emin misiniz?')) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.style.display = 'none';
-                form.innerHTML = `
-                    <input type="hidden" name="event_id" value="${eventId}">
-                    <input type="hidden" name="delete_event_index" value="1">
-                    <input type="hidden" name="csrf_token" value="${csrfToken}">
-                `;
-                document.body.appendChild(form);
-                form.submit();
-            }
+    function deleteEvent() {
+        if(confirm('Bu kaydı silmek istediğinizden emin misiniz?')) {
+            document.getElementById('delete_id_input').value = document.getElementById('event_id').value;
+            document.getElementById('delete_table_input').value = 'events';
+            document.getElementById('deleteItemForm').submit();
         }
-    </script>
+    }
+
+    function newUnit() {
+        document.getElementById('form_unit_id').value = '';
+        document.getElementById('form_unit_name').value = '';
+        document.getElementById('form_unit_color').value = '#3498db';
+        document.getElementById('form_unit_active').checked = true;
+        unitModal.show();
+    }
+
+    function editUnit(u) {
+        document.getElementById('form_unit_id').value = u.id;
+        document.getElementById('form_unit_name').value = u.unit_name;
+        document.getElementById('form_unit_color').value = u.color;
+        document.getElementById('form_unit_active').checked = (u.is_active == 1);
+        unitModal.show();
+    }
+    
+    // --- SEKTÖR MODAL İŞLEMLERİ ---
+    
+    function newSector() {
+        document.getElementById('sectorModalLabel').innerText = 'Yeni Sektör Ekle';
+        document.getElementById('sector_key').value = 'new';
+        document.getElementById('new_sector_key').value = '';
+        document.getElementById('new_sector_key').readOnly = false;
+        document.getElementById('sector_name').value = '';
+        document.getElementById('unit_label').value = '';
+        document.getElementById('event_label').value = '';
+        document.getElementById('contact_label').value = '';
+        document.getElementById('time_label').value = '';
+        document.getElementById('icon').value = '';
+        document.getElementById('sector_is_active').checked = true;
+        sectorModal.show();
+    }
+    
+    function editSector(s) {
+        document.getElementById('sectorModalLabel').innerText = 'Sektör Düzenle: ' + s.sector_name;
+        document.getElementById('sector_key').value = s.sector_key;
+        document.getElementById('new_sector_key').value = s.sector_key;
+        document.getElementById('new_sector_key').readOnly = true; // Anahtar değiştirilemez
+        document.getElementById('sector_name').value = s.sector_name;
+        document.getElementById('unit_label').value = s.unit_label;
+        document.getElementById('event_label').value = s.event_label;
+        document.getElementById('contact_label').value = s.contact_label;
+        document.getElementById('time_label').value = s.time_label;
+        document.getElementById('icon').value = s.icon;
+        document.getElementById('sector_is_active').checked = (s.is_active == 1);
+        sectorModal.show();
+    }
+    
+    // --- YÖNETİCİ MODAL İŞLEMLERİ ---
+
+    function newAdminUser() {
+        document.getElementById('adminUserModalLabel').innerText = 'Yeni Yönetici Ekle';
+        document.getElementById('user_id').value = 0;
+        document.getElementById('username').value = '';
+        document.getElementById('full_name').value = '';
+        document.getElementById('email').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('user_is_active').checked = true;
+        adminUserModal.show();
+    }
+
+    function editAdminUser(u) {
+        document.getElementById('adminUserModalLabel').innerText = 'Yönetici Düzenle: ' + u.username;
+        document.getElementById('user_id').value = u.id;
+        document.getElementById('username').value = u.username;
+        document.getElementById('full_name').value = u.full_name;
+        document.getElementById('email').value = u.email;
+        document.getElementById('password').value = ''; // Şifreyi boş bırak
+        document.getElementById('user_is_active').checked = (u.is_active == 1);
+        adminUserModal.show();
+    }
+
+
+    // --- RAPORLAMA İŞLEMLERİ ---
+    
+    function validateReportDates(form) {
+        const start = new Date(form.start_date.value);
+        const end = new Date(form.end_date.value);
+        if (start > end) {
+            alert("Başlangıç tarihi, bitiş tarihinden sonra olamaz!");
+            return false;
+        }
+        
+        // Hangi butonun tıklandığını tespit etme (formun kendisi değil, basılan buton)
+        const submitButton = document.activeElement;
+        const exportType = submitButton.getAttribute('name') === 'generate_report' ? submitButton.value : 'view';
+
+        // Hidden input'u oluştur veya güncelle
+        let hiddenInput = form.querySelector('input[name="generate_report_type"]');
+        if (!hiddenInput) {
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = 'generate_report'; // POST işlemi bunu kullanır
+            form.appendChild(hiddenInput);
+        }
+        hiddenInput.value = exportType;
+        
+        return true;
+    }
+
+    // Başlangıç ve bitiş tarihlerini bugünün ayı ile otomatik doldurur
+    document.addEventListener('DOMContentLoaded', function() {
+        const today = new Date();
+        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+
+        const startDateInput = document.getElementById('start_date_report');
+        const endDateInput = document.getElementById('end_date_report');
+
+        if (startDateInput && !startDateInput.value) {
+            startDateInput.value = firstDayOfMonth;
+        }
+        if (endDateInput && !endDateInput.value) {
+            endDateInput.value = lastDayOfMonth;
+        }
+    });
+</script>
 </body>
 </html>
