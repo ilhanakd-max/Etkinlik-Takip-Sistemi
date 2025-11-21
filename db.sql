@@ -52,6 +52,7 @@ CREATE TABLE `admin_users` (
   `password` varchar(255) NOT NULL,
   `full_name` varchar(150) DEFAULT NULL,
   `email` varchar(150) DEFAULT NULL,
+  `role` varchar(50) NOT NULL DEFAULT 'admin',
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
@@ -60,8 +61,8 @@ CREATE TABLE `admin_users` (
 -- Tablo döküm verisi `admin_users`
 --
 
-INSERT INTO `admin_users` (`id`, `username`, `password`, `full_name`, `email`, `is_active`, `created_at`) VALUES
-(1, 'djmaster', '$2y$12$5j7pxLshNc7IXE5DZ9pMK.hjmMKIc1QoB3Y8vCheymQ0eJEN5f3TS', 'Varsayılan Yönetici', NULL, 1, '2025-11-19 13:45:19');
+INSERT INTO `admin_users` (`id`, `username`, `password`, `full_name`, `email`, `role`, `is_active`, `created_at`) VALUES
+(1, 'admin', '$2y$12$5j7pxLshNc7IXE5DZ9pMK.hjmMKIc1QoB3Y8vCheymQ0eJEN5f3TS', 'Süper Yönetici', 'admin@example.com', 'super_admin', 1, '2025-11-19 13:45:19');
 
 -- --------------------------------------------------------
 

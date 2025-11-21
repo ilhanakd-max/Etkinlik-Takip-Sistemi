@@ -8,28 +8,46 @@ function is_super_admin_session(): bool
     if (!isset($_SESSION)) {
         return false;
     }
+
+    // Oturumda `super_admin` anahtarı varsa (eski sistemle uyumluluk)
     if (!empty($_SESSION['super_admin'])) {
         return true;
     }
+
+    // Oturumdaki kullanıcının rolünü kontrol et
     $user = $_SESSION['admin_user'] ?? null;
-    if (!$user || !is_array($user)) {
-        return false;
+    if ($user && is_array($user)) {
+        return ($user['role'] ?? 'admin') === 'super_admin';
     }
-    if (($user['username'] ?? '') === 'ilhan') {
-        return true;
-    }
-    return ($user['role'] ?? '') === 'super';
+
+    return false;
 }
 
-function is_super_admin_request(): bool
+function is_super_admin_request(PDO $pdo): bool
 {
+    // Mevcut oturum zaten süper admin ise, isteği de öyle kabul et
     if (is_super_admin_session()) {
         return true;
     }
+
+    // Giriş denemesi yapılıyorsa, veritabanından rolü kontrol et
     if (!empty($_POST['admin_login'])) {
-        $username = $_POST['username'] ?? '';
-        return trim($username) === 'ilhan';
+        $username = trim($_POST['username'] ?? '');
+        if (empty($username)) {
+            return false;
+        }
+
+        try {
+            $stmt = $pdo->prepare("SELECT role FROM admin_users WHERE username = ?");
+            $stmt->execute([$username]);
+            $role = $stmt->fetchColumn();
+            return $role === 'super_admin';
+        } catch (PDOException $e) {
+            // Veritabanı hatası durumunda güvenli varsayılan
+            return false;
+        }
     }
+
     return false;
 }
 
@@ -47,11 +65,11 @@ function render_license_block_screen(string $title, string $message): void
     echo "<div style='padding:40px; font-family:Arial; text-align:center'>";
     echo "<h2 style='color:#e3342f'>" . htmlspecialchars($title) . "</h2>";
     echo "<p>" . nl2br(htmlspecialchars($message)) . "</p>";
-    echo "<p><strong>Lisans sahibi süper admin (Akdeniz Media Tech) giriş yaparak sistemi yeniden etkinleştirebilir.</strong></p>";
+    echo "<p><strong>Lisans sahibi süper admin giriş yaparak sistemi yeniden etkinleştirebilir.</strong></p>";
     echo "<form method='post' style='max-width:320px;margin:20px auto;text-align:left'>";
     echo "<input type='hidden' name='admin_login' value='1'>";
-    echo "<div style='margin-bottom:10px'><label>Kullanıcı Adı";
-    echo "<input type='text' name='username' value='Kullanıcı adı' style='width:100%;padding:8px;margin-top:4px'></label></div>";
+    echo "<div style='margin-bottom:10px'><label>Süper Admin Kullanıcı Adı";
+    echo "<input type='text' name='username' style='width:100%;padding:8px;margin-top:4px' placeholder='Kullanıcı adı'></label></div>";
     echo "<div style='margin-bottom:10px'><label>Şifre";
     echo "<input type='password' name='password' style='width:100%;padding:8px;margin-top:4px' placeholder='Şifre'></label></div>";
     echo "<button type='submit' style='width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:4px'>Süper Admin Girişi</button>";
@@ -68,7 +86,7 @@ function enforce_license(PDO $pdo, array $config = [], ?callable $onBlock = null
         return;
     }
 
-    if (is_super_admin_request()) {
+    if (is_super_admin_request($pdo)) {
         return;
     }
 

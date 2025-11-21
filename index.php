@@ -19,23 +19,38 @@ session_set_cookie_params([
 ]);
 session_start();
 
-// ----------------------------------------------------
-// 🔥🔥🔥 KRİTİK UYARI: VERİTABANI BAĞLANTI BİLGİLERİNİ GİRİN 🔥🔥🔥
 // --- VERİTABANI AYARLARI ---
-$db_host = 'sql211.infinityfree.com'; // Kendi sunucu ayarlarınızı girin
-$db_name = 'if0_40197167_test';   // Veritabanı adı
-$db_user = 'if0_40197167';           // Kullanıcı adı
-$db_pass = 'Aeg151851';               // Şifre
+// Güvenlik ve esneklik için, veritabanı kimlik bilgileri artık
+// bu dosyanın dışındaki `database.php` dosyasından yüklenmektedir.
+// Kurulum için `database.example.php` dosyasını kopyalayın.
+
+$db_config_path = __DIR__ . '/database.php';
+
+if (!file_exists($db_config_path)) {
+    die("<h1 style='color: orange;'>Kurulum Eksik</h1>" .
+        "<p><code>database.php</code> dosyası bulunamadı. Lütfen <code>database.example.php</code> dosyasını kopyalayıp " .
+        "adını <code>database.php</code> olarak değiştirin ve kendi veritabanı bilgilerinizi girin.</p>");
+}
+
+$db_config = require $db_config_path;
 
 try {
-    $dsn = "mysql:host=$db_host;dbname=$db_name;charset=utf8mb4";
-    $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
-    $pdo = new PDO($dsn, $db_user, $db_pass, $options);
+    $dsn = sprintf(
+        "mysql:host=%s;dbname=%s;charset=%s",
+        $db_config['db_host'],
+        $db_config['db_name'],
+        $db_config['db_charset'] ?? 'utf8mb4'
+    );
+    $options = [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+    ];
+    $pdo = new PDO($dsn, $db_config['db_user'], $db_config['db_pass'], $options);
     $pdo->exec("SET time_zone = '+03:00'");
 } catch(PDOException $e) {
-    // Sayfanın açılmamasının ana sebebi budur.
     error_log("Veritabanı bağlantı hatası: " . $e->getMessage());
-    die("<h1 style='color: red;'>Sistem Hatası: Veritabanı Bağlantısı Kurulamadı.</h1><p>Lütfen <code>index.php</code> dosyasındaki <b>\$db_host</b>, <b>\$db_name</b>, <b>\$db_user</b> ve <b>\$db_pass</b> bilgilerini kontrol edin.</p>");
+    die("<h1 style='color: red;'>Sistem Hatası: Veritabanı Bağlantısı Kurulamadı.</h1>" .
+        "<p>Lütfen <code>database.php</code> dosyasındaki bilgilerin doğru olduğundan emin olun.</p>");
 }
 
 // --- LISANS KONTROLÜ ---
@@ -49,7 +64,13 @@ function clean_input($data) {
 }
 
 function is_admin() { return isset($_SESSION['admin']) && $_SESSION['admin'] === true; }
-function is_super_admin() { return is_super_admin_session(); }
+function is_super_admin() {
+    // Hem eski `super_admin` anahtarını hem de yeni rol tabanlı sistemi destekler
+    if (isset($_SESSION['super_admin']) && $_SESSION['super_admin'] === true) {
+        return true;
+    }
+    return isset($_SESSION['admin_user']['role']) && $_SESSION['admin_user']['role'] === 'super_admin';
+}
 function generateCSRFToken() { if (!isset($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); return $_SESSION['csrf_token']; }
 function validateCSRFToken($token) { return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token); }
 function is_valid_date_string($date) { if (!is_string($date) || $date === '') return false; $dt = DateTime::createFromFormat('Y-m-d', $date); return $dt && $dt->format('Y-m-d') === $date; }
@@ -330,15 +351,6 @@ function generateXLS($data, $title, $date_range, $filters) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Admin Girişi
     if (isset($_POST['admin_login'])) {
-        // Super admin override
-        if (clean_input($_POST['username']) === 'ilhan' && $_POST['password'] === 'Cfm102.5') {
-            session_regenerate_id(true);
-            $_SESSION['admin'] = true;
-            $_SESSION['super_admin'] = true;
-            $_SESSION['admin_user'] = ['username'=>'ilhan','id'=>0,'role'=>'super'];
-            header('Location: ?page=admin'); exit;
-        }
-
         $username = clean_input($_POST['username']);
         $password = $_POST['password']; 
         
@@ -351,6 +363,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 session_regenerate_id(true);
                 $_SESSION['admin'] = true;
                 $_SESSION['admin_user'] = $user;
+
+                // Eğer kullanıcı `super_admin` rolüne sahipse, oturumda bunu belirt
+                if (isset($user['role']) && $user['role'] === 'super_admin') {
+                    $_SESSION['super_admin'] = true;
+                }
+
                 header('Location: ?page=admin'); exit;
             } else {
                 $login_error = "Hatalı kullanıcı adı veya şifre.";
